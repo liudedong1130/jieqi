@@ -5,7 +5,8 @@ from typing import Any
 import numpy as np
 
 from .board import Board
-from .constants import NUM_ACTIONS, Color
+from .constants import NUM_ACTIONS
+from .encoder import encode_observation
 from .move import encode_action, decode_action, Move
 from .render import render as _render
 from .rules import generate_legal_moves
@@ -21,19 +22,9 @@ class JieqiEnv:
 
     Observation space
     ----------------
-    A dict::
-
-        {
-            "pieces": [
-                {"pos": int, "color": int, "type": int, "revealed": bool},
-                ...
-            ],
-            "current_player": int,  # 0=RED, 1=BLACK
-        }
-
-    ``type`` always uses ``Piece.effective_type`` — hidden pieces show
-    ``origin_type``, revealed pieces show ``true_type``.  True identities
-    of unrevealed pieces are never exposed.
+    ``(28, 10, 9)`` float32 tensor.  See ``jieqi.encoder`` for the
+    channel layout.  Hidden pieces are represented by ``origin_type``
+    only — ``true_type`` is **never** exposed.
 
     Action space
     ------------
@@ -47,13 +38,13 @@ class JieqiEnv:
 
     # ---- lifecycle ---------------------------------------------------------
 
-    def reset(self, seed: int | None = None) -> dict[str, Any]:
-        """Reset the board to the starting position and return the observation."""
+    def reset(self, seed: int | None = None) -> np.ndarray:
+        """Reset the board to the starting position and return the observation tensor."""
         self._board.reset(seed=seed)
         self._steps = 0
         return self.observation()
 
-    def step(self, action: int) -> tuple[dict[str, Any], float, bool, bool, dict[str, Any]]:
+    def step(self, action: int) -> tuple[np.ndarray, float, bool, bool, dict[str, Any]]:
         """Execute *action* and return ``(obs, reward, terminated, truncated, info)``.
 
         Raises
@@ -117,22 +108,9 @@ class JieqiEnv:
         """Return the player to move: 0 = RED, 1 = BLACK."""
         return int(self._board.turn)
 
-    def observation(self) -> dict[str, Any]:
-        """Return the current observation (no true_type leak)."""
-        pieces: list[dict[str, Any]] = []
-        for pos, p in enumerate(self._board.cells):
-            if p is None:
-                continue
-            pieces.append({
-                "pos": pos,
-                "color": int(p.color),
-                "type": int(p.effective_type),
-                "revealed": p.revealed,
-            })
-        return {
-            "pieces": pieces,
-            "current_player": int(self._board.turn),
-        }
+    def observation(self) -> np.ndarray:
+        """Return the (28, 10, 9) encoded observation tensor."""
+        return encode_observation(self._board)
 
     def render(self) -> str:
         """Return an ASCII representation of the board."""

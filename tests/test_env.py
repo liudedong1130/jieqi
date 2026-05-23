@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
 from jieqi import BOARD_SIZE, Color, Piece, PieceType
@@ -282,16 +283,13 @@ class TestBoardConsistency:
 
 
 class TestJieqiEnvReset:
-    def test_reset_returns_observation(self) -> None:
+    def test_reset_returns_tensor(self) -> None:
         from jieqi.env import JieqiEnv
 
         env = JieqiEnv()
         obs = env.reset(seed=42)
-        assert isinstance(obs, dict)
-        assert "pieces" in obs
-        assert "current_player" in obs
-        assert obs["current_player"] == int(Color.RED)
-        assert len(obs["pieces"]) == 32
+        assert isinstance(obs, np.ndarray)
+        assert obs.shape == (28, 10, 9)
 
     def test_observation_does_not_leak_true_type(self) -> None:
         """Hidden pieces in observation show origin_type, not true_type."""
@@ -300,19 +298,22 @@ class TestJieqiEnvReset:
         env = JieqiEnv()
         env.reset(seed=42)
         obs = env.observation()
-
-        for p in obs["pieces"]:
-            # Find the corresponding piece on the board
-            board_piece = env.board[p["pos"]]
-            assert board_piece is not None
-            if not board_piece.revealed:
-                # Hidden: obs "type" must equal origin_type, not true_type
-                assert p["type"] == int(board_piece.origin_type)
-                assert p["revealed"] is False
-            else:
-                # Revealed: obs "type" equals true_type
-                assert p["type"] == int(board_piece.true_type)
-                assert p["revealed"] is True
+        # Check: for each hidden piece, the revealed channel (0-13) is 0
+        # and the hidden origin channel shows origin_type, not true_type
+        for pos, p in enumerate(env.board.cells):
+            if p is None or p.revealed:
+                continue
+            r, c = pos // 9, pos % 9
+            # Hidden piece should NOT appear in any revealed channel (0-13)
+            for ch in range(14):  # 0 through 13
+                assert obs[ch, r, c] == 0.0, (
+                    f"Hidden piece at ({r},{c}) leaked into revealed channel {ch}"
+                )
+            # Should appear in the correct hidden origin channel
+            origin_ch = 14 + int(p.origin_type) - 1
+            own_base = 14 if p.color == env.board.turn else 20
+            actual_ch = own_base + int(p.origin_type) - 1
+            assert obs[actual_ch, r, c] == 1.0
 
 
 class TestJieqiEnvLegalActions:
@@ -375,7 +376,8 @@ class TestJieqiEnvStep:
         env.reset(seed=42)
         actions = env.legal_actions()
         obs, reward, terminated, truncated, info = env.step(actions[0])
-        assert isinstance(obs, dict)
+        assert isinstance(obs, np.ndarray)
+        assert obs.shape == (28, 10, 9)
         assert isinstance(reward, float)
         assert isinstance(terminated, bool)
         assert isinstance(truncated, bool)
@@ -417,14 +419,28 @@ class TestJieqiEnvTermination:
 
 class TestObservationNoLeak:
     def test_hidden_true_type_not_in_observation(self) -> None:
+        """Observation tensor must not encode true_type of hidden pieces."""
         from jieqi.env import JieqiEnv
 
         env = JieqiEnv()
         env.reset(seed=42)
         obs = env.observation()
-        # Verify no piece dict contains "true_type" key
-        for p in obs["pieces"]:
-            assert "true_type" not in p
+        assert isinstance(obs, np.ndarray)
+        # For each hidden piece, verify it only appears in its origin_type channel
+        # and the channel index is derived from origin_type, never from true_type
+        for pos, p in enumerate(env.board.cells):
+            if p is None or p.revealed:
+                continue
+            r, c = pos // 9, pos % 9
+            base = 14 if p.color == env.board.turn else 20
+            expected_ch = base + int(p.origin_type) - 1
+            # Must be 1.0 in the correct hidden origin channel
+            assert obs[expected_ch, r, c] == 1.0
+            # Must not appear in the hidden channel corresponding to true_type
+            # (when true_type != origin_type)
+            if p.true_type != p.origin_type:
+                true_ch = base + int(p.true_type) - 1
+                assert obs[true_ch, r, c] == 0.0
 
 
 class TestRandomSelfPlay:

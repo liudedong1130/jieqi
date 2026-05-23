@@ -12,6 +12,7 @@ from .constants import (
     Color,
     PieceType,
 )
+from .encoder import NUM_CHANNELS, encode_observation
 from .env import JieqiEnv
 from .move import (
     Move,
@@ -51,4 +52,6 @@ __all__ = [
     "render",
     "generate_piece_moves",
     "generate_legal_moves",
+    "encode_observation",
+    "NUM_CHANNELS",
 ]
