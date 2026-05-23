@@ -20,6 +20,7 @@ def main() -> None:
     p.add_argument("--games", type=int, default=50, help="Games per match")
     p.add_argument("--max-steps", type=int, default=300)
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--parallel", type=int, default=0, help="Use N worker processes")
     p.add_argument("--output", type=str, default=None, help="Save JSON to file")
     args = p.parse_args()
 
@@ -37,7 +38,13 @@ def main() -> None:
     print()
 
     arena = Arena(configs)
-    results = arena.run_round_robin(n_games=args.games, max_steps=args.max_steps, seed=args.seed)
+    if args.parallel > 0:
+        results = arena.run_round_robin_mp(
+            n_games=args.games, max_steps=args.max_steps, seed=args.seed,
+            workers=args.parallel,
+        )
+    else:
+        results = arena.run_round_robin(n_games=args.games, max_steps=args.max_steps, seed=args.seed)
 
     print(arena.summary_markdown())
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import multiprocessing as mp
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -18,6 +19,57 @@ _SIMPLE_AGENTS: dict[str, type] = {
     "rollout": RolloutAgent,
     "belief_mcts": BeliefMCTSAgent,
 }
+
+# ---------------------------------------------------------------------------
+#  Multiprocessing workers (top-level for pickling)
+# ---------------------------------------------------------------------------
+
+GameResult = tuple[str, str, int, bool, str, int]  # (a_name, b_name, g, a_is_red, winner, steps)
+
+
+def _dataclass_to_dict(obj: Any) -> dict:
+    """Convert a dataclass instance to a plain dict for pickling."""
+    if hasattr(obj, "__dataclass_fields__"):
+        return {f: getattr(obj, f) for f in obj.__dataclass_fields__}
+    return obj
+
+
+def _mp_run_game(args: tuple) -> GameResult:
+    """Run a single game in a worker process."""
+    (a_cfg_dict, b_cfg_dict, g, half, n_games, max_steps, seed) = args
+    a_cfg = AgentConfig(**a_cfg_dict)
+    b_cfg = AgentConfig(**b_cfg_dict)
+
+    a_is_red = g < half
+    if a_is_red:
+        red_cfg, black_cfg = a_cfg, b_cfg
+    else:
+        red_cfg, black_cfg = b_cfg, a_cfg
+
+    env = JieqiEnv(max_steps=max_steps)
+    env.reset(seed=seed + g)
+    red = Arena._make_agent_static(red_cfg, seed=seed + g * 2)
+    black = Arena._make_agent_static(black_cfg, seed=seed + g * 2 + 1)
+
+    steps = 0
+    done = False
+    while not done:
+        agent = red if env.current_player() == 0 else black
+        action = agent.select_action(env)
+        if action not in env.legal_actions():
+            action = env.legal_actions()[0]
+        _obs, reward, terminated, truncated, _info = env.step(action)
+        steps += 1
+        if terminated:
+            if reward > 0:
+                winner = "red" if env.current_player() == 1 else "black"
+            else:
+                winner = "draw"
+            return a_cfg.name, b_cfg.name, g, a_is_red, winner, steps
+        elif truncated:
+            return a_cfg.name, b_cfg.name, g, a_is_red, "draw", steps
+
+    return a_cfg.name, b_cfg.name, g, a_is_red, "draw", steps
 
 
 # ---------------------------------------------------------------------------
@@ -79,6 +131,10 @@ class Arena:
 
     @staticmethod
     def _make_agent(config: AgentConfig, seed: int) -> Any:
+        return Arena._make_agent_static(config, seed)
+
+    @staticmethod
+    def _make_agent_static(config: AgentConfig, seed: int) -> Any:
         cls = _SIMPLE_AGENTS.get(config.type)
         if cls is not None:
             return cls(seed=seed, **config.params)
@@ -160,7 +216,7 @@ class Arena:
         max_steps: int = 300,
         seed: int = 0,
     ) -> list[MatchResult]:
-        """Play every pair of agents and update Elo ratings."""
+        """Play every pair of agents and update Elo ratings (single process)."""
         self._results = []
         n = len(self.agents)
         for i in range(n):
@@ -170,15 +226,81 @@ class Arena:
                     n_games=n_games, max_steps=max_steps, seed=seed,
                 )
                 self._results.append(mr)
-                # Update Elo
-                score_a = mr.a_win_rate + 0.5 * mr.draw_rate
-                old_a = self._ratings[mr.agent_a]
-                old_b = self._ratings[mr.agent_b]
-                new_a, new_b = update_elo(old_a, old_b, score_a)
-                self._ratings[mr.agent_a] = new_a
-                self._ratings[mr.agent_b] = new_b
+                self._update_elo(mr)
                 seed += 1
         return self._results
+
+    def run_round_robin_mp(
+        self,
+        n_games: int = 100,
+        max_steps: int = 300,
+        seed: int = 0,
+        workers: int = 4,
+    ) -> list[MatchResult]:
+        """Play every pair of agents using game-level multiprocessing.
+
+        Each *game* is a separate task, load-balanced across *workers*
+        processes.  Scales well even when matches have different speeds.
+        """
+        n = len(self.agents)
+        half = n_games // 2
+
+        # Build game-level tasks
+        tasks: list[tuple] = []
+        for i in range(n):
+            for j in range(i + 1, n):
+                a_cfg = _dataclass_to_dict(self.agents[i])
+                b_cfg = _dataclass_to_dict(self.agents[j])
+                for g in range(n_games):
+                    tasks.append((a_cfg, b_cfg, g, half, n_games, max_steps, seed))
+                seed += 1
+
+        total_games = len(tasks)
+        print(f"  Running {total_games} games ({len(self.agents)} agents × {n_games} games) "
+              f"with {workers} workers ...")
+
+        with mp.Pool(processes=workers) as pool:
+            raw_results: list[GameResult] = pool.map(_mp_run_game, tasks)
+
+        # Aggregate game results into match results
+        self._results = []
+        for i in range(n):
+            for j in range(i + 1, n):
+                a_name = self.agents[i].name
+                b_name = self.agents[j].name
+                mr = MatchResult(agent_a=a_name, agent_b=b_name, total_games=n_games)
+
+                for gr in raw_results:
+                    ga_name, gb_name, g, a_is_red, winner, steps = gr
+                    if {ga_name, gb_name} != {a_name, b_name}:
+                        continue
+                    mr.avg_steps += steps
+                    if winner == "red":
+                        if a_is_red:
+                            mr.a_wins += 1; mr.a_as_red_wins += 1
+                        else:
+                            mr.b_wins += 1; mr.b_as_red_wins += 1
+                    elif winner == "black":
+                        if a_is_red:
+                            mr.b_wins += 1; mr.b_as_black_wins += 1
+                        else:
+                            mr.a_wins += 1; mr.a_as_black_wins += 1
+                    else:
+                        mr.draws += 1
+
+                mr.avg_steps /= max(n_games, 1)
+                self._results.append(mr)
+                self._update_elo(mr)
+
+        return self._results
+
+    def _update_elo(self, mr: MatchResult) -> None:
+        score_a = mr.a_win_rate + 0.5 * mr.draw_rate
+        old_a = self._ratings[mr.agent_a]
+        old_b = self._ratings[mr.agent_b]
+        new_a, new_b = update_elo(old_a, old_b, score_a)
+        self._ratings[mr.agent_a] = new_a
+        self._ratings[mr.agent_b] = new_b
 
     # ---- ratings ----------------------------------------------------------
 
