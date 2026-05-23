@@ -8,6 +8,8 @@ Runs many RandomAgent-vs-RandomAgent games and calls
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -118,6 +120,8 @@ def run_stress_test(
     max_steps: int = 300,
     seed: int = 0,
     verbose: bool = False,
+    save_records: bool = True,
+    record_dir: str = "stress_records",
 ) -> dict[str, Any]:
     """Run *n_games* random self-play games with consistency checks.
 
@@ -128,12 +132,17 @@ def run_stress_test(
     failures_detail: list[dict] = []
     total_steps = 0
 
+    if save_records:
+        os.makedirs(record_dir, exist_ok=True)
+
     for g in range(n_games):
+        game_seed = seed + g
         env = JieqiEnv(max_steps=max_steps)
-        env.reset(seed=seed + g)
+        env.reset(seed=game_seed)
         agent_red = RandomAgent(seed=seed + g)
         agent_black = RandomAgent(seed=seed + g + 10000)
         move_history: list[int] = []
+        moves_info: list[dict] = []
 
         game_failed = False
         steps = 0
@@ -143,15 +152,17 @@ def run_stress_test(
             errs = assert_state_consistency(env)
             if errs:
                 failed += 1
-                failures_detail.append({
+                detail = {
                     "game": g,
-                    "seed": seed + g,
+                    "seed": game_seed,
                     "step": steps,
                     "errors": errs,
                     "board": render(env.board),
                     "move_history": list(move_history),
                     "captured_count": len(env.board.captured),
-                })
+                }
+                failures_detail.append(detail)
+                _save_failure_record(env, game_seed, moves_info, record_dir, g, save_records)
                 game_failed = True
                 break
 
@@ -159,6 +170,7 @@ def run_stress_test(
             if not actions:
                 break
 
+            player = env.current_player()
             if env.current_player() == 0:
                 action = agent_red.select_action(env)
             else:
@@ -166,21 +178,27 @@ def run_stress_test(
 
             # Verify step doesn't crash
             try:
-                env.step(action)
+                obs, reward, terminated, truncated, _info = env.step(action)
             except Exception as exc:
                 failed += 1
-                failures_detail.append({
+                detail = {
                     "game": g,
-                    "seed": seed + g,
+                    "seed": game_seed,
                     "step": steps,
                     "error": str(exc),
                     "action": action,
                     "board": render(env.board),
                     "move_history": list(move_history),
-                })
+                }
+                failures_detail.append(detail)
+                _save_failure_record(env, game_seed, moves_info, record_dir, g, save_records)
                 game_failed = True
                 break
 
+            moves_info.append({
+                "action": action, "player": player,
+                "reward": float(reward), "terminated": terminated, "truncated": truncated,
+            })
             move_history.append(action)
             steps += 1
 
@@ -200,6 +218,24 @@ def run_stress_test(
         "failures_detail": failures_detail,
         "total_steps": total_steps,
     }
+
+
+def _save_failure_record(
+    env: JieqiEnv,
+    seed: int,
+    moves_info: list[dict],
+    record_dir: str,
+    game_idx: int,
+    save: bool,
+) -> None:
+    if not save:
+        return
+    from jieqi.record import build_record, save_to_file
+
+    record = build_record(env, seed, moves_info, debug=True)
+    path = os.path.join(record_dir, f"failure_game_{game_idx}_seed_{seed}.json")
+    save_to_file(record, path)
+    print(f"  Failure record saved to {path}")
 
 
 # =============================================================================
