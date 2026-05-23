@@ -131,3 +131,80 @@ class TestSupervisedTrain:
             )
             assert result.returncode == 0
             assert "p_loss" in result.stdout
+
+
+# ---------------------------------------------------------------------------
+#  BeliefMCTS Pretrain pipeline
+# ---------------------------------------------------------------------------
+
+
+class TestPretrainPipeline:
+    def test_pipeline_runs(self) -> None:
+        import subprocess, sys
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as d:
+            ckpt_path = os.path.join(d, "pretrained.pt")
+            script = Path(__file__).parent.parent / "scripts" / "pretrain_from_belief_mcts.py"
+            result = subprocess.run(
+                [sys.executable, str(script),
+                 "--games", "5", "--max-steps", "50",
+                 "--epochs", "2", "--batch-size", "32",
+                 "--eval-games", "2",
+                 "--checkpoint-out", ckpt_path, "--seed", "42"],
+                capture_output=True, text=True, timeout=180,
+            )
+            assert result.returncode == 0
+            assert os.path.exists(ckpt_path)
+
+    def test_pretrained_loadable_by_policy_agent(self) -> None:
+        import subprocess, sys
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as d:
+            ckpt_path = os.path.join(d, "pretrained.pt")
+            script = Path(__file__).parent.parent / "scripts" / "pretrain_from_belief_mcts.py"
+            subprocess.run(
+                [sys.executable, str(script),
+                 "--games", "3", "--max-steps", "40",
+                 "--epochs", "1", "--batch-size", "32",
+                 "--eval-games", "2",
+                 "--checkpoint-out", ckpt_path, "--seed", "42"],
+                capture_output=True, text=True, timeout=120,
+            )
+            from agents.policy_agent import PolicyAgent
+            from jieqi.env import JieqiEnv
+
+            env = JieqiEnv()
+            env.reset(seed=0)
+            agent = PolicyAgent(ckpt_path, deterministic=True)
+            action = agent.select_action(env)
+            assert action in env.legal_actions()
+
+    def test_pretrained_outputs_legal_actions(self) -> None:
+        import subprocess, sys
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as d:
+            ckpt_path = os.path.join(d, "pretrained.pt")
+            script = Path(__file__).parent.parent / "scripts" / "pretrain_from_belief_mcts.py"
+            subprocess.run(
+                [sys.executable, str(script),
+                 "--games", "3", "--max-steps", "40",
+                 "--epochs", "1", "--batch-size", "32",
+                 "--eval-games", "2",
+                 "--checkpoint-out", ckpt_path, "--seed", "42"],
+                capture_output=True, text=True, timeout=120,
+            )
+            from agents.policy_agent import PolicyAgent
+            from jieqi.env import JieqiEnv
+
+            env = JieqiEnv()
+            env.reset(seed=0)
+            agent = PolicyAgent(ckpt_path, deterministic=True)
+            for _ in range(10):
+                action = agent.select_action(env)
+                assert action in env.legal_actions()
+                env.step(action)
+                if sum(env.legal_action_mask()) == 0:
+                    break
