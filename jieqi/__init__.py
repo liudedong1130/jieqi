@@ -23,6 +23,7 @@ from .move import (
 )
 from .pieces import Piece
 from .render import render
+from .rules import generate_legal_moves, generate_piece_moves
 
 __all__ = [
     "BOARD_COLS",
@@ -46,4 +47,6 @@ __all__ = [
     "is_valid_pos",
     "is_valid_rc",
     "render",
+    "generate_piece_moves",
+    "generate_legal_moves",
 ]

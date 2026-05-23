@@ -121,6 +121,10 @@ class Board:
             if p is not None and p.revealed
         ]
 
+    def set_cell(self, pos: int, piece: Piece | None) -> None:
+        """Directly set a cell value (for testing / position setup)."""
+        self._cells[pos] = piece
+
     def hidden_pieces(self) -> list[tuple[int, Piece]]:
         """Return all hidden pieces as ``[(pos, piece), ...]``."""
         return [
