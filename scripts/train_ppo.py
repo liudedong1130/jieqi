@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import csv
 import os
+import random
 import sys
 from pathlib import Path
 from time import time
@@ -16,6 +17,7 @@ from collections import deque
 
 from evaluation.arena import AgentConfig, Arena
 from jieqi.env import JieqiEnv
+from rl.opponent_pool import OpponentPool
 from rl.trainer import PPOTrainer
 
 # =============================================================================
@@ -86,6 +88,9 @@ def main() -> None:
     p.add_argument("--channels", type=int, default=128, help="ResNet channels")
     p.add_argument("--blocks", type=int, default=3, help="ResNet residual blocks")
     p.add_argument("--init-checkpoint", type=str, default=None, help="Init model from pretrained checkpoint")
+    p.add_argument("--opponent-pool", action="store_true", help="Enable opponent pool training")
+    p.add_argument("--add-checkpoint-interval", type=int, default=100, help="Add self to pool every N episodes")
+    p.add_argument("--self-play-prob", type=float, default=0.5, help="Probability of self-play vs opponent")
     p.add_argument("--device", type=str, default=None)
     args = p.parse_args()
 
@@ -134,8 +139,24 @@ def main() -> None:
     best_vs_greedy = -1.0
     best_vs_belief_mcts = -1.0
 
+    # Opponent pool setup
+    pool: OpponentPool | None = None
+    if args.opponent_pool:
+        pool = OpponentPool()
+        print(f"Opponent pool: {len(pool)} agents (random, greedy)")
+        if args.init_checkpoint:
+            pool.add_policy(args.init_checkpoint, "init_pretrained")
+
     for ep in range(1, args.episodes + 1):
-        stats = trainer.collect_episode(seed=args.seed + ep)
+        if pool is not None:
+            opp_cfg = pool.sample(random.Random(args.seed + ep * 3))
+            opponent = OpponentPool.make_agent(opp_cfg, seed=args.seed + ep * 3 + 1)
+            stats = trainer.collect_episode_with_opponent(
+                seed=args.seed + ep, opponent=opponent,
+                self_play_prob=args.self_play_prob,
+            )
+        else:
+            stats = trainer.collect_episode(seed=args.seed + ep)
         ep_returns.append(stats["return"])
         ep_lengths.append(stats["steps"])
 
@@ -176,6 +197,13 @@ def main() -> None:
                 trainer.save(os.path.join(args.checkpoint_dir, "best_vs_belief_mcts.pt"))
             os.remove(tmp_ckpt)
             print(f"  eval: vs random {er['win_rate']:.1%}  vs greedy {eg['win_rate']:.1%}  vs bmcts {eb['win_rate']:.1%}")
+
+        # Add current model to opponent pool
+        if pool is not None and args.add_checkpoint_interval > 0 and ep % args.add_checkpoint_interval == 0:
+            ckpt_path = os.path.join(args.checkpoint_dir, f"pool_ep{ep}.pt")
+            trainer.save(ckpt_path)
+            pool.add_policy(ckpt_path, f"self_ep{ep}")
+            print(f"  pool: added self_ep{ep} ({len(pool)} total)")
 
         # Logging
         if ep % args.log_interval == 0:

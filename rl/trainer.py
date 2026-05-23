@@ -129,6 +129,74 @@ class PPOTrainer:
         self._episode_count += 1
         return {"steps": steps, "return": ep_return}
 
+    def collect_episode_with_opponent(
+        self, seed: int | None, opponent: Any, self_play_prob: float = 0.5,
+    ) -> dict:
+        """Run one episode with an opponent from the pool.
+
+        With probability *self_play_prob*, both sides use the training
+        policy (standard self-play).  Otherwise the training policy
+        plays one randomly-chosen colour against *opponent*.
+
+        Only the training policy's transitions are buffered.  Returns
+        are computed via Monte-Carlo from the game outcome.
+        """
+        use_self_play = random.random() < self_play_prob
+        if use_self_play:
+            return self.collect_episode(seed=seed)
+
+        obs = self.env.reset(seed=seed)
+        done = False
+        steps = 0
+        train_player = random.choice([0, 1])  # 0=RED, 1=BLACK
+
+        while not done:
+            current = self.env.current_player()
+            if current == train_player:
+                # Training policy's move — buffer it
+                action, log_prob, value = self._select_action(obs)
+                next_obs, reward, terminated, truncated, _info = self.env.step(action)
+                done = terminated or truncated
+
+                self._obs_buf.append(obs)
+                self._act_buf.append(action)
+                self._logp_buf.append(log_prob)
+                self._val_buf.append(value)
+                self._rew_buf.append(reward)
+                self._done_buf.append(done)
+                self._player_buf.append(current)
+
+                obs = next_obs
+                steps += 1
+            else:
+                # Opponent's move — don't buffer
+                action = opponent.select_action(self.env)
+                if action not in self.env.legal_actions():
+                    action = self.env.legal_actions()[0]
+                next_obs, reward, terminated, truncated, _info = self.env.step(action)
+                done = terminated or truncated
+                obs = next_obs
+                steps += 1
+                if terminated and reward > 0:
+                    # Opponent won → back-propagate -1 to last training move
+                    for i in range(len(self._rew_buf) - 1, -1, -1):
+                        if self._player_buf[i] == train_player:
+                            self._rew_buf[i] = -1.0
+                            break
+
+        # MC returns: game outcome from train_player's perspective
+        ep_return = 0.0
+        for i in range(len(self._rew_buf) - 1, -1, -1):
+            if self._rew_buf[i] > 0:
+                ep_return = 1.0 if self._player_buf[i] == train_player else -1.0
+                break
+            elif self._done_buf[i] and self._rew_buf[i] == 0:
+                ep_return = 0.0
+                break
+
+        self._episode_count += 1
+        return {"steps": steps, "return": ep_return, "opponent": True}
+
     @torch.no_grad()
     def _select_action(self, obs: np.ndarray) -> tuple[int, float, float]:
         t = torch.from_numpy(obs).unsqueeze(0).to(self.device)

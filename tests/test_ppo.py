@@ -510,6 +510,51 @@ class TestTrainScript:
             )
             assert result.returncode == 0, f"ResNet train failed:\n{result.stderr}"
 
+class TestOpponentPool:
+    def test_pool_add_and_sample(self) -> None:
+        from rl.opponent_pool import OpponentPool
+        import random as py_random
+
+        pool = OpponentPool()
+        assert len(pool) >= 2  # random + greedy
+        rng = py_random.Random(42)
+        cfg = pool.sample(rng)
+        assert cfg["type"] in ("random", "greedy")
+        agent = OpponentPool.make_agent(cfg, seed=1)
+        assert agent is not None
+
+    def test_train_with_opponent_pool(self) -> None:
+        import subprocess, sys
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as d:
+            script = Path(__file__).parent.parent / "scripts" / "train_ppo.py"
+            result = subprocess.run(
+                [sys.executable, str(script),
+                 "--opponent-pool", "--add-checkpoint-interval", "20",
+                 "--self-play-prob", "0.5",
+                 "--episodes", "30", "--max-steps", "80",
+                 "--episodes-per-update", "8", "--log-interval", "10",
+                 "--eval-interval", "0", "--checkpoint-dir", d, "--seed", "42"],
+                capture_output=True, text=True, timeout=300,
+            )
+            assert result.returncode == 0
+            assert "pool" in result.stdout.lower()
+
+    def test_opponent_pool_agent_plays(self) -> None:
+        from rl.opponent_pool import OpponentPool
+        from jieqi.env import JieqiEnv
+        import random as py_random
+
+        env = JieqiEnv()
+        env.reset(seed=42)
+        pool = OpponentPool()
+        rng = py_random.Random(42)
+        cfg = pool.sample(rng)
+        agent = OpponentPool.make_agent(cfg, seed=1)
+        action = agent.select_action(env)
+        assert action in env.legal_actions()
+
     def test_train_with_init_checkpoint(self) -> None:
         import subprocess, sys
         from pathlib import Path
