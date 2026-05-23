@@ -262,8 +262,6 @@ def generate_piece_moves(board: Board, row: int, col: int) -> list[Move]:
     piece = board[rc_to_pos(row, col)]
     if piece is None:
         return []
-    if not piece.revealed:
-        return []
 
     gen = _GENERATORS.get(piece.effective_type)
     if gen is None:
@@ -284,8 +282,6 @@ def _is_in_check(board: Board, color: Color) -> bool:
         return True  # king missing → effectively in check
     opponent = color.opposite()
     for _pos, piece in board.pieces_of(opponent):
-        if not piece.revealed:
-            continue
         r, c = pos_to_rc(_pos)
         for mv in generate_piece_moves(board, r, c):
             if mv.to_pos == king_pos:
@@ -341,8 +337,6 @@ def generate_legal_moves(board: Board, color: Color) -> list[Move]:
     """
     legal: list[Move] = []
     for _pos, piece in board.pieces_of(color):
-        if not piece.revealed:
-            continue
         r, c = pos_to_rc(_pos)
         for mv in generate_piece_moves(board, r, c):
             if _is_legal_after_move(board, mv, color):

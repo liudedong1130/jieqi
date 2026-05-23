@@ -583,27 +583,39 @@ class TestLegalMoves:
 
 
 class TestEdgeCases:
-    def test_hidden_piece_generates_no_moves(self) -> None:
-        """Hidden pieces do not generate moves."""
+    def test_hidden_piece_generates_moves_by_origin_type(self) -> None:
+        """Hidden pieces generate moves according to origin_type."""
         board = _make_empty_board()
+        # Place Kings to avoid check/kings-facing issues
+        _place(board, 9, 4, _piece(Color.RED, PieceType.KING))
+        _place(board, 0, 4, _piece(Color.BLACK, PieceType.KING))
+        # Hidden rook with origin_type=ROOK
         _place(board, 5, 4, _piece(Color.RED, PieceType.ROOK, revealed=False))
 
         moves = generate_piece_moves(board, 5, 4)
-        assert moves == []
+        # Should have rook-like moves (straight lines)
+        targets = {m.to_pos for m in moves}
+        assert len(moves) > 0
+        # Rook at (5,4) on empty board: can reach all rows on col 4 and all cols on row 5
+        # But (0,4) has Black King, (9,4) has Red King
+        assert rc_to_pos(0, 4) in targets  # can capture Black King
+        assert rc_to_pos(9, 4) not in targets  # can't capture own King
+        assert rc_to_pos(5, 0) in targets  # left horizontal
 
     def test_empty_cell_generates_no_moves(self) -> None:
         board = _make_empty_board()
         moves = generate_piece_moves(board, 0, 0)
         assert moves == []
 
-    def test_generate_legal_moves_skips_hidden(self) -> None:
+    def test_hidden_piece_contributes_legal_moves(self) -> None:
+        """Hidden pieces now contribute to legal moves."""
         board = _make_empty_board()
         _place(board, 9, 4, _piece(Color.RED, PieceType.KING))
         _place(board, 5, 0, _piece(Color.RED, PieceType.ROOK, revealed=False))
         _place(board, 0, 4, _piece(Color.BLACK, PieceType.KING))
 
         legal = generate_legal_moves(board, Color.RED)
-        # Only King should have moves; hidden rook should not contribute
         from_positions = {m.from_pos for m in legal}
-        assert rc_to_pos(5, 0) not in from_positions  # hidden rook not used
+        # Both hidden rook and king should contribute
+        assert rc_to_pos(5, 0) in from_positions  # hidden rook used
         assert rc_to_pos(9, 4) in from_positions  # king used

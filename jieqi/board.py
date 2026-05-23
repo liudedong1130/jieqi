@@ -10,7 +10,7 @@ from .constants import (
     Color,
     PieceType,
 )
-from .move import pos_to_rc
+from .move import Move, pos_to_rc
 from .pieces import Piece
 
 
@@ -24,6 +24,8 @@ class Board:
 
     def __init__(self) -> None:
         self._cells: list[Piece | None] = [None] * BOARD_SIZE
+        self._captured: list[Piece] = []
+        self._turn: Color = Color.RED
 
     # ---- initialization ---------------------------------------------------
 
@@ -35,6 +37,8 @@ class Board:
         """
         rng = random.Random(seed)
         self._cells = [None] * BOARD_SIZE
+        self._captured = []
+        self._turn = Color.RED
         self._init_side(Color.RED, rng)
         self._init_side(Color.BLACK, rng)
 
@@ -124,6 +128,48 @@ class Board:
     def set_cell(self, pos: int, piece: Piece | None) -> None:
         """Directly set a cell value (for testing / position setup)."""
         self._cells[pos] = piece
+
+    # ---- state mutation ----------------------------------------------------
+
+    def apply_move(self, move: Move) -> Piece | None:
+        """Execute *move* on the board.
+
+        Handles piece movement, hidden-piece reveal on first move, captures,
+        and turn switching.  Returns the captured piece or ``None``.
+        """
+        from dataclasses import replace
+
+        from_pos, to_pos = move.from_pos, move.to_pos
+        moving = self._cells[from_pos]
+        if moving is None:
+            raise ValueError(f"No piece at position {from_pos}")
+
+        # Reveal hidden piece on its first move
+        if not moving.revealed:
+            moving = replace(moving, revealed=True)
+
+        captured = self._cells[to_pos]
+
+        self._cells[to_pos] = moving
+        self._cells[from_pos] = None
+
+        if captured is not None:
+            self._captured.append(captured)
+
+        self._turn = self._turn.opposite()
+        return captured
+
+    @property
+    def captured(self) -> list[Piece]:
+        """List of pieces captured so far, in order."""
+        return list(self._captured)
+
+    @property
+    def turn(self) -> Color:
+        """The player whose turn it is to move."""
+        return self._turn
+
+    # ---- query helpers ------------------------------------------------------
 
     def hidden_pieces(self) -> list[tuple[int, Piece]]:
         """Return all hidden pieces as ``[(pos, piece), ...]``."""
