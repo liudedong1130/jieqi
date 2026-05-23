@@ -12,6 +12,17 @@ from jieqi.env import JieqiEnv
 from rl.model import PolicyValueNet, create_model
 
 
+def _get_device(requested: str | None = None) -> torch.device:
+    """Resolve device: explicit string > CUDA > MPS > CPU."""
+    if requested:
+        return torch.device(requested)
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    if torch.backends.mps.is_available():
+        return torch.device("mps")
+    return torch.device("cpu")
+
+
 class PPOTrainer:
     """Minimal PPO trainer for Jieqi self-play."""
 
@@ -40,7 +51,7 @@ class PPOTrainer:
         self.update_epochs = update_epochs
         self.episodes_per_update = episodes_per_update
 
-        self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
+        self.device = _get_device(device)
         self._model_type = model_type
         self._model_kwargs = model_kwargs or {}
         self.model = create_model(model_type, **self._model_kwargs).to(self.device)

@@ -31,7 +31,10 @@ class PolicyAgent:
         deterministic: bool = False,
         seed: int | None = None,
     ) -> None:
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device(
+            "cuda" if torch.cuda.is_available() else
+            "mps" if torch.backends.mps.is_available() else "cpu"
+        )
         ckpt = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
         if "model_config" in ckpt:
             self.model = _model_from_config(ckpt["model_config"]).to(self.device)

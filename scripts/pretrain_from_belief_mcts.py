@@ -147,7 +147,11 @@ def main() -> None:
     args = p.parse_args()
 
     torch.manual_seed(args.seed)
-    device = torch.device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
+    device = torch.device(
+        args.device or
+        "cuda" if torch.cuda.is_available() else
+        "mps" if torch.backends.mps.is_available() else "cpu"
+    )
 
     # Step 1: Data
     if args.data:

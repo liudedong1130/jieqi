@@ -30,7 +30,11 @@ def main() -> None:
     p.add_argument("--device", type=str, default=None)
     args = p.parse_args()
 
-    device = torch.device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
+    device = torch.device(
+        args.device or
+        "cuda" if torch.cuda.is_available() else
+        "mps" if torch.backends.mps.is_available() else "cpu"
+    )
 
     # Load data
     dataset = AZDataset()
