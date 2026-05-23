@@ -1,10 +1,13 @@
+from .board import Board
 from .constants import (
     BOARD_COLS,
     BOARD_ROWS,
     BOARD_SIZE,
+    HIDDEN_TRUE_TYPE_POOL,
     NUM_ACTIONS,
     NUM_PIECE_TYPES,
     PIECE_COUNTS,
+    STANDARD_LAYOUT,
     TOTAL_PIECES_PER_SIDE,
     Color,
     PieceType,
@@ -19,6 +22,7 @@ from .move import (
     rc_to_pos,
 )
 from .pieces import Piece
+from .render import render
 
 __all__ = [
     "BOARD_COLS",
@@ -26,16 +30,20 @@ __all__ = [
     "BOARD_SIZE",
     "NUM_ACTIONS",
     "NUM_PIECE_TYPES",
+    "HIDDEN_TRUE_TYPE_POOL",
     "PIECE_COUNTS",
+    "STANDARD_LAYOUT",
     "TOTAL_PIECES_PER_SIDE",
     "Color",
     "PieceType",
     "Piece",
     "Move",
+    "Board",
     "pos_to_rc",
     "rc_to_pos",
     "encode_action",
     "decode_action",
     "is_valid_pos",
     "is_valid_rc",
+    "render",
 ]
