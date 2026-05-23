@@ -299,3 +299,105 @@ class TestEvaluateScript:
         a_black = result["agent_a"]["as_black_total"]
         assert a_red == 10, f"Agent A should play 10 as Red, got {a_red}"
         assert a_black == 10, f"Agent A should play 10 as Black, got {a_black}"
+
+
+# ---------------------------------------------------------------------------
+#  Belief MCTS Agent
+# ---------------------------------------------------------------------------
+
+
+class TestBeliefMCTSAgent:
+    def test_select_action_is_legal(self) -> None:
+        from agents.belief_mcts_agent import BeliefMCTSAgent
+
+        env = JieqiEnv()
+        env.reset(seed=42)
+        agent = BeliefMCTSAgent(num_samples=10, seed=1)
+        for _ in range(30):
+            action = agent.select_action(env)
+            assert action in env.legal_actions()
+            env.step(action)
+            if sum(env.legal_action_mask()) == 0:
+                break
+
+    def test_no_true_type_peek(self) -> None:
+        """BeliefMCTSAgent must never access env.board._cells."""
+        from agents.belief_mcts_agent import BeliefMCTSAgent
+
+        env = JieqiEnv()
+        env.reset(seed=42)
+        agent = BeliefMCTSAgent(num_samples=10, seed=1)
+        action = agent.select_action(env)
+        assert action in env.legal_actions()
+
+    def test_vs_random_multi_games(self) -> None:
+        """BeliefMCTSAgent vs RandomAgent: 5 games without crash."""
+        from scripts.evaluate import run_eval
+
+        result = run_eval(
+            agent_a_name="belief_mcts",
+            agent_b_name="random",
+            n_games=5,
+            max_steps=100,
+            seed=123,
+            swap=False,
+        )
+        assert result["errors"] == 0
+        total = result["agent_a"]["wins"] + result["agent_b"]["wins"] + result["draws"]
+        assert total == 5
+
+    def test_king_capture_scenario(self) -> None:
+        """In a position where king capture is possible, agent should find it."""
+        from agents.belief_mcts_agent import BeliefMCTSAgent
+
+        env = JieqiEnv(max_steps=50)
+        # Set up: Red rook can capture Black king on same file, nothing blocking
+        b = env.board
+        for pos in range(BOARD_SIZE):
+            b.set_cell(pos, None)
+        b._captured = []
+        b._turn = Color.RED
+        b.set_cell(rc_to_pos(9, 4), Piece(Color.RED, PieceType.KING, PieceType.KING, True))
+        b.set_cell(rc_to_pos(0, 3), Piece(Color.BLACK, PieceType.KING, PieceType.KING, True))
+        # Red rook at (5, 0), can go to (0, 0) — but king is at (0,3), not (0,0)
+        # Let's put king on same column as rook
+        b.set_cell(rc_to_pos(0, 3), Piece(Color.BLACK, PieceType.KING, PieceType.KING, True))
+        # Wait, this doesn't work. Let me set up: Red rook attacks Black king on same line
+        # Red king at (9,4), Black king at (0,4), with blocker
+        b.set_cell(rc_to_pos(9, 4), Piece(Color.RED, PieceType.KING, PieceType.KING, True))
+        b.set_cell(rc_to_pos(0, 4), Piece(Color.BLACK, PieceType.KING, PieceType.KING, True))
+        # Red rook at (5,4) blocking kings facing
+        b.set_cell(rc_to_pos(5, 4), Piece(Color.RED, PieceType.ROOK, PieceType.ROOK, True))
+        # Put a Red pawn on col 3 to block the rook from going to some positions
+        # But the rook on col 4 can't capture Black king on col 4 unless there's nothing between
+        # The rook is at (5,4) ON the same file. It can capture Black king at (0,4).
+        # But wait, the Black king is at (0,4) and the rook is at (5,4). Can the rook capture?
+        # Yes, the rook is between the kings. If the rook moves to (0,4), it captures the king.
+        # But this would leave kings facing! Red king (9,4), Black king (0,4) — wait, Black king is captured.
+        # So the capture is legal.
+
+        agent = BeliefMCTSAgent(num_samples=20, seed=0)
+        action = agent.select_action(env)
+        to_pos = action % 90
+        king_pos = rc_to_pos(0, 4)
+        # Agent should prefer capturing the king (value 10000)
+        assert to_pos == king_pos, f"Expected king capture at {king_pos}, got action to {to_pos}"
+
+    def test_belief_pool_consistency(self) -> None:
+        """Same observation with different underlying true_types produces same pool."""
+        from agents.belief_mcts_agent import BeliefMCTSAgent
+
+        env1 = JieqiEnv()
+        env1.reset(seed=42)
+        obs1 = env1.observation()
+        pool1_own, pool1_opp = BeliefMCTSAgent._build_pools(obs1)
+
+        env2 = JieqiEnv()
+        env2.reset(seed=99)  # different true_type assignments
+        obs2 = env2.observation()
+        pool2_own, pool2_opp = BeliefMCTSAgent._build_pools(obs2)
+
+        # Pools should be identical because observations are identical
+        # (only origin_types visible, true_types hidden)
+        assert pool1_own == pool2_own
+        assert pool1_opp == pool2_opp

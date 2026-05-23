@@ -11,6 +11,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from agents.belief_mcts_agent import BeliefMCTSAgent
 from agents.greedy_agent import GreedyAgent
 from agents.policy_agent import PolicyAgent
 from agents.random_agent import RandomAgent
@@ -22,6 +23,7 @@ _SIMPLE_REGISTRY: dict[str, type] = {
     "random": RandomAgent,
     "greedy": GreedyAgent,
     "rollout": RolloutAgent,
+    "belief_mcts": BeliefMCTSAgent,
 }
 
 
