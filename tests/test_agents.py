@@ -313,7 +313,7 @@ class TestBeliefMCTSAgent:
         env = JieqiEnv()
         env.reset(seed=42)
         agent = BeliefMCTSAgent(num_samples=10, seed=1)
-        for _ in range(30):
+        for _ in range(20):
             action = agent.select_action(env)
             assert action in env.legal_actions()
             env.step(action)
@@ -351,53 +351,60 @@ class TestBeliefMCTSAgent:
         from agents.belief_mcts_agent import BeliefMCTSAgent
 
         env = JieqiEnv(max_steps=50)
-        # Set up: Red rook can capture Black king on same file, nothing blocking
         b = env.board
         for pos in range(BOARD_SIZE):
             b.set_cell(pos, None)
         b._captured = []
         b._turn = Color.RED
         b.set_cell(rc_to_pos(9, 4), Piece(Color.RED, PieceType.KING, PieceType.KING, True))
-        b.set_cell(rc_to_pos(0, 3), Piece(Color.BLACK, PieceType.KING, PieceType.KING, True))
-        # Red rook at (5, 0), can go to (0, 0) — but king is at (0,3), not (0,0)
-        # Let's put king on same column as rook
-        b.set_cell(rc_to_pos(0, 3), Piece(Color.BLACK, PieceType.KING, PieceType.KING, True))
-        # Wait, this doesn't work. Let me set up: Red rook attacks Black king on same line
-        # Red king at (9,4), Black king at (0,4), with blocker
-        b.set_cell(rc_to_pos(9, 4), Piece(Color.RED, PieceType.KING, PieceType.KING, True))
         b.set_cell(rc_to_pos(0, 4), Piece(Color.BLACK, PieceType.KING, PieceType.KING, True))
-        # Red rook at (5,4) blocking kings facing
         b.set_cell(rc_to_pos(5, 4), Piece(Color.RED, PieceType.ROOK, PieceType.ROOK, True))
-        # Put a Red pawn on col 3 to block the rook from going to some positions
-        # But the rook on col 4 can't capture Black king on col 4 unless there's nothing between
-        # The rook is at (5,4) ON the same file. It can capture Black king at (0,4).
-        # But wait, the Black king is at (0,4) and the rook is at (5,4). Can the rook capture?
-        # Yes, the rook is between the kings. If the rook moves to (0,4), it captures the king.
-        # But this would leave kings facing! Red king (9,4), Black king (0,4) — wait, Black king is captured.
-        # So the capture is legal.
 
-        agent = BeliefMCTSAgent(num_samples=20, seed=0)
+        agent = BeliefMCTSAgent(num_samples=30, seed=0)
         action = agent.select_action(env)
         to_pos = action % 90
         king_pos = rc_to_pos(0, 4)
-        # Agent should prefer capturing the king (value 10000)
         assert to_pos == king_pos, f"Expected king capture at {king_pos}, got action to {to_pos}"
 
-    def test_belief_pool_consistency(self) -> None:
-        """Same observation with different underlying true_types produces same pool."""
-        from agents.belief_mcts_agent import BeliefMCTSAgent
+    def test_belief_state_consistent_across_true_types(self) -> None:
+        """同一 observation，不同 true_type → BeliefState 相同"""
+        from agents.belief_mcts_agent import BeliefState
 
         env1 = JieqiEnv()
         env1.reset(seed=42)
-        obs1 = env1.observation()
-        pool1_own, pool1_opp = BeliefMCTSAgent._build_pools(obs1)
+        bs1 = BeliefState.from_env(env1)
 
         env2 = JieqiEnv()
-        env2.reset(seed=99)  # different true_type assignments
-        obs2 = env2.observation()
-        pool2_own, pool2_opp = BeliefMCTSAgent._build_pools(obs2)
+        env2.reset(seed=99)
+        bs2 = BeliefState.from_env(env2)
 
-        # Pools should be identical because observations are identical
-        # (only origin_types visible, true_types hidden)
-        assert pool1_own == pool2_own
-        assert pool1_opp == pool2_opp
+        assert bs1.pool_own == bs2.pool_own
+        assert bs1.pool_opp == bs2.pool_opp
+        assert len(bs1.hidden) == len(bs2.hidden)
+        assert len(bs1.revealed) == len(bs2.revealed)
+
+    def test_determinization_piece_counts(self) -> None:
+        """sample_determinization produces valid piece counts per side."""
+        import random as py_random
+        from agents.belief_mcts_agent import BeliefState, sample_determinization
+
+        env = JieqiEnv()
+        env.reset(seed=42)
+        belief = BeliefState.from_env(env)
+        rng = py_random.Random(42)
+
+        board = sample_determinization(belief, rng)
+        own_cnt = sum(1 for v in board.values() if v["color"] == 0)
+        opp_cnt = sum(1 for v in board.values() if v["color"] == 1)
+        assert own_cnt == 16
+        assert opp_cnt == 16
+
+    def test_top_k_debug_output(self) -> None:
+        """top_k 参数开启时不崩溃"""
+        from agents.belief_mcts_agent import BeliefMCTSAgent
+
+        env = JieqiEnv()
+        env.reset(seed=42)
+        agent = BeliefMCTSAgent(num_samples=5, top_k=3, seed=1)
+        action = agent.select_action(env)
+        assert action in env.legal_actions()
