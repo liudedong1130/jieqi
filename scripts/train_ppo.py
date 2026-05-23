@@ -85,6 +85,7 @@ def main() -> None:
     p.add_argument("--model", type=str, default="simple_cnn", choices=["simple_cnn", "resnet"])
     p.add_argument("--channels", type=int, default=128, help="ResNet channels")
     p.add_argument("--blocks", type=int, default=3, help="ResNet residual blocks")
+    p.add_argument("--init-checkpoint", type=str, default=None, help="Init model from pretrained checkpoint")
     p.add_argument("--device", type=str, default=None)
     args = p.parse_args()
 
@@ -96,7 +97,7 @@ def main() -> None:
         "episode", "total_steps", "avg_return", "avg_len",
         "policy_loss", "value_loss", "entropy",
         "approx_kl", "clip_frac", "explained_var",
-        "eval_vs_random", "eval_vs_greedy",
+        "eval_vs_random", "eval_vs_greedy", "eval_vs_belief_mcts",
     ]
     csv_path = os.path.join(args.checkpoint_dir, "metrics.csv")
     logger = CSVLogger(csv_path, csv_headers)
@@ -120,12 +121,18 @@ def main() -> None:
     if args.resume:
         trainer.load(args.resume)
         print(f"Resumed from {args.resume} (ep {trainer.episode_count})")
+    elif args.init_checkpoint:
+        cfg = trainer.load_model_only(args.init_checkpoint)
+        print(f"Initialized model from {args.init_checkpoint}")
+        if cfg:
+            print(f"  model_config: {cfg}")
 
     ep_returns: deque = deque(maxlen=100)
     ep_lengths: deque = deque(maxlen=100)
     t_start = time()
     best_vs_random = -1.0
     best_vs_greedy = -1.0
+    best_vs_belief_mcts = -1.0
 
     for ep in range(1, args.episodes + 1):
         stats = trainer.collect_episode(seed=args.seed + ep)
@@ -148,21 +155,27 @@ def main() -> None:
         # Periodic eval
         eval_vs_random = None
         eval_vs_greedy = None
+        eval_vs_belief_mcts = None
         if args.eval_interval > 0 and ep % args.eval_interval == 0:
             tmp_ckpt = os.path.join(args.checkpoint_dir, "_eval_tmp.pt")
             trainer.save(tmp_ckpt)
             er = quick_eval(tmp_ckpt, "random", n_games=args.eval_games, max_steps=min(200, args.max_steps))
             eg = quick_eval(tmp_ckpt, "greedy", n_games=args.eval_games, max_steps=min(200, args.max_steps))
+            eb = quick_eval(tmp_ckpt, "belief_mcts", n_games=min(args.eval_games, 5), max_steps=min(150, args.max_steps))
             eval_vs_random = er["win_rate"]
             eval_vs_greedy = eg["win_rate"]
+            eval_vs_belief_mcts = eb["win_rate"]
             if er["win_rate"] > best_vs_random:
                 best_vs_random = er["win_rate"]
                 trainer.save(os.path.join(args.checkpoint_dir, "best_vs_random.pt"))
             if eg["win_rate"] > best_vs_greedy:
                 best_vs_greedy = eg["win_rate"]
                 trainer.save(os.path.join(args.checkpoint_dir, "best_vs_greedy.pt"))
+            if eb["win_rate"] > best_vs_belief_mcts:
+                best_vs_belief_mcts = eb["win_rate"]
+                trainer.save(os.path.join(args.checkpoint_dir, "best_vs_belief_mcts.pt"))
             os.remove(tmp_ckpt)
-            print(f"  eval: vs random {er['win_rate']:.1%}  vs greedy {eg['win_rate']:.1%}")
+            print(f"  eval: vs random {er['win_rate']:.1%}  vs greedy {eg['win_rate']:.1%}  vs bmcts {eb['win_rate']:.1%}")
 
         # Logging
         if ep % args.log_interval == 0:
@@ -182,6 +195,7 @@ def main() -> None:
                 round(loss_stats.get("explained_var", 0.0), 4),
                 round(eval_vs_random, 4) if eval_vs_random is not None else "",
                 round(eval_vs_greedy, 4) if eval_vs_greedy is not None else "",
+                round(eval_vs_belief_mcts, 4) if eval_vs_belief_mcts is not None else "",
             ]
             logger.log(row)
             print(

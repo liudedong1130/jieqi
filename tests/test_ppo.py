@@ -510,6 +510,36 @@ class TestTrainScript:
             )
             assert result.returncode == 0, f"ResNet train failed:\n{result.stderr}"
 
+    def test_train_with_init_checkpoint(self) -> None:
+        import subprocess, sys
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as d:
+            # First crate a tiny pretrained model
+            pretrain_script = Path(__file__).parent.parent / "scripts" / "pretrain_from_belief_mcts.py"
+            pretrained_path = os.path.join(d, "pretrained.pt")
+            subprocess.run(
+                [sys.executable, str(pretrain_script),
+                 "--games", "2", "--max-steps", "30",
+                 "--epochs", "1", "--batch-size", "16",
+                 "--eval-games", "1",
+                 "--checkpoint-out", pretrained_path, "--seed", "42"],
+                capture_output=True, text=True, timeout=120,
+            )
+
+            # Train PPO from pretrained init
+            script = Path(__file__).parent.parent / "scripts" / "train_ppo.py"
+            result = subprocess.run(
+                [sys.executable, str(script),
+                 "--init-checkpoint", pretrained_path,
+                 "--episodes", "16", "--max-steps", "50",
+                 "--episodes-per-update", "8", "--log-interval", "10",
+                 "--eval-interval", "0", "--checkpoint-dir", d, "--seed", "42"],
+                capture_output=True, text=True, timeout=180,
+            )
+            assert result.returncode == 0
+            assert "Initialized model from" in result.stdout
+
     def test_best_checkpoint_saved(self) -> None:
         import subprocess
         import sys

@@ -287,6 +287,7 @@ class PPOTrainer:
         torch.save(ckpt, path)
 
     def load(self, path: str) -> None:
+        """Full resume: model + optimizer + episode count."""
         from rl.model import _model_from_config
 
         ckpt = torch.load(path, map_location=self.device, weights_only=False)
@@ -299,6 +300,27 @@ class PPOTrainer:
         if "optimizer" in ckpt:
             self.optimizer.load_state_dict(ckpt["optimizer"])
         self._episode_count = ckpt.get("episode", 0)
+
+    def load_model_only(self, path: str) -> dict:
+        """Load model weights from a pretrained checkpoint (no optimizer).
+
+        Returns the checkpoint's model_config dict for logging.
+        The current model architecture must match the checkpoint.
+        Episode count and optimizer state are **not** restored.
+        """
+        from rl.model import _model_from_config
+
+        ckpt = torch.load(path, map_location=self.device, weights_only=False)
+        cfg = ckpt.get("model_config", {})
+        if cfg:
+            ckpt_type = cfg.get("type", "?")
+            if ckpt_type != self._model_type:
+                raise ValueError(
+                    f"Model type mismatch: checkpoint is '{ckpt_type}', "
+                    f"trainer is '{self._model_type}'. Use matching --model."
+                )
+        self.model.load_state_dict(ckpt["model"])
+        return cfg
 
     @property
     def episode_count(self) -> int:
