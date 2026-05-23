@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+import os
+
 import numpy as np
 import pytest
 
@@ -107,9 +110,9 @@ class TestGreedyAgent:
         """GreedyAgent vs RandomAgent: 10 games without crash."""
         from scripts.evaluate import run_eval
 
-        result = run_eval(red_name="greedy", black_name="random", n_games=10, max_steps=200, seed=123)
+        result = run_eval(agent_a_name="greedy", agent_b_name="random", n_games=10, max_steps=200, seed=123)
         assert result["errors"] == 0
-        total = result["red_wins"] + result["black_wins"] + result["draws"]
+        total = result["agent_a"]["wins"] + result["agent_b"]["wins"] + result["draws"]
         assert total == 10
 
 
@@ -133,10 +136,48 @@ class TestRolloutAgent:
         """RolloutAgent vs RandomAgent: 10 games without crash."""
         from scripts.evaluate import run_eval
 
-        result = run_eval(red_name="rollout", black_name="random", n_games=10, max_steps=200, seed=123)
+        result = run_eval(agent_a_name="rollout", agent_b_name="random", n_games=10, max_steps=200, seed=123)
         assert result["errors"] == 0
-        total = result["red_wins"] + result["black_wins"] + result["draws"]
+        total = result["agent_a"]["wins"] + result["agent_b"]["wins"] + result["draws"]
         assert total == 10
+
+
+# ---------------------------------------------------------------------------
+#  PolicyAgent
+# ---------------------------------------------------------------------------
+
+class TestPolicyAgent:
+    def test_loads_checkpoint(self) -> None:
+        from agents.policy_agent import PolicyAgent
+
+        agent = PolicyAgent("/tmp/ckpt/ppo_final.pt", deterministic=True)
+        assert agent.model is not None
+
+    def test_select_action_is_legal(self) -> None:
+        from agents.policy_agent import PolicyAgent
+
+        env = JieqiEnv()
+        env.reset(seed=42)
+        agent = PolicyAgent("/tmp/ckpt/ppo_final.pt", deterministic=False, seed=1)
+        for _ in range(30):
+            action = agent.select_action(env)
+            assert action in env.legal_actions()
+            env.step(action)
+            if sum(env.legal_action_mask()) == 0:
+                break
+
+    def test_deterministic_mode(self) -> None:
+        from agents.policy_agent import PolicyAgent
+
+        env = JieqiEnv()
+        env.reset(seed=42)
+        agent = PolicyAgent("/tmp/ckpt/ppo_final.pt", deterministic=True, seed=1)
+        # Same state → same action
+        action1 = agent.select_action(env)
+        env2 = JieqiEnv()
+        env2.reset(seed=42)
+        action2 = agent.select_action(env2)
+        assert action1 == action2
 
 
 # ---------------------------------------------------------------------------
@@ -157,16 +198,104 @@ class TestEvaluateScript:
         assert result.returncode == 0
         assert "Agent vs Agent" in result.stdout
 
-    def test_quick_run(self) -> None:
+    def test_random_vs_random(self) -> None:
         import subprocess
         import sys
         from pathlib import Path
 
         script = Path(__file__).parent.parent / "scripts" / "evaluate.py"
         result = subprocess.run(
-            [sys.executable, str(script), "--red", "random", "--black", "random",
-             "--games", "2", "--max-steps", "50"],
+            [sys.executable, str(script),
+             "--agent-a", "random", "--agent-b", "random",
+             "--games", "4", "--max-steps", "50"],
             capture_output=True, text=True, timeout=30,
         )
         assert result.returncode == 0
-        assert "Results" in result.stdout
+        assert "wins" in result.stdout
+
+    def test_greedy_vs_random(self) -> None:
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        script = Path(__file__).parent.parent / "scripts" / "evaluate.py"
+        result = subprocess.run(
+            [sys.executable, str(script),
+             "--agent-a", "greedy", "--agent-b", "random",
+             "--games", "4", "--max-steps", "50"],
+            capture_output=True, text=True, timeout=30,
+        )
+        assert result.returncode == 0
+
+    def test_policy_vs_random(self) -> None:
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        script = Path(__file__).parent.parent / "scripts" / "evaluate.py"
+        result = subprocess.run(
+            [sys.executable, str(script),
+             "--agent-a", "policy", "--checkpoint-a", "/tmp/ckpt/ppo_final.pt",
+             "--agent-b", "random",
+             "--games", "4", "--max-steps", "50", "--deterministic"],
+            capture_output=True, text=True, timeout=30,
+        )
+        assert result.returncode == 0
+
+    def test_swap_colors(self) -> None:
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        script = Path(__file__).parent.parent / "scripts" / "evaluate.py"
+        result = subprocess.run(
+            [sys.executable, str(script),
+             "--agent-a", "random", "--agent-b", "random",
+             "--games", "10", "--max-steps", "50"],
+            capture_output=True, text=True, timeout=60,
+        )
+        assert result.returncode == 0
+        assert "as Red" in result.stdout
+        assert "as Black" in result.stdout
+
+    def test_json_output(self) -> None:
+        import subprocess
+        import sys
+        import tempfile
+        from pathlib import Path
+
+        script = Path(__file__).parent.parent / "scripts" / "evaluate.py"
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+            tmp = f.name
+        try:
+            result = subprocess.run(
+                [sys.executable, str(script),
+                 "--agent-a", "random", "--agent-b", "random",
+                 "--games", "2", "--max-steps", "50", "--output", tmp],
+                capture_output=True, text=True, timeout=30,
+            )
+            assert result.returncode == 0
+            with open(tmp) as f:
+                data = json.load(f)
+            assert "agent_a" in data
+            assert "agent_b" in data
+            assert data["games"] == 2
+        finally:
+            os.unlink(tmp)
+
+    def test_swap_logic_correct(self) -> None:
+        """With swap enabled, each agent plays half games as Red."""
+        from scripts.evaluate import run_eval
+
+        result = run_eval(
+            agent_a_name="random",
+            agent_b_name="random",
+            n_games=20,
+            max_steps=50,
+            seed=42,
+            swap=True,
+        )
+        a_red = result["agent_a"]["as_red_total"]
+        a_black = result["agent_a"]["as_black_total"]
+        assert a_red == 10, f"Agent A should play 10 as Red, got {a_red}"
+        assert a_black == 10, f"Agent A should play 10 as Black, got {a_black}"
