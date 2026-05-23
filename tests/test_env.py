@@ -458,9 +458,9 @@ class TestRandomSelfPlay:
         move_count = 0
         while not done:
             if env.current_player() == 0:
-                action = agent_red.act(env)
+                action = agent_red.select_action(env)
             else:
-                action = agent_black.act(env)
+                action = agent_black.select_action(env)
             obs, reward, terminated, truncated, info = env.step(action)
             move_count += 1
             done = terminated or truncated

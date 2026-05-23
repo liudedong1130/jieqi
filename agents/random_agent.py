@@ -13,7 +13,7 @@ class RandomAgent:
     def __init__(self, seed: int | None = None) -> None:
         self._rng = random.Random(seed)
 
-    def act(self, env: JieqiEnv) -> int:
+    def select_action(self, env: JieqiEnv) -> int:
         actions = env.legal_actions()
         if not actions:
             raise ValueError("No legal actions available")
