@@ -497,6 +497,23 @@ def _setup_king_capture(env: "JieqiEnv") -> None:
     b.set_cell(rc_to_pos(5, 0), _piece(Color.RED, PieceType.ROOK, PieceType.ROOK, True))
 
 
+# ---------------------------------------------------------------------------
+#  Stress test (pytest integration)
+# ---------------------------------------------------------------------------
+
+
+class TestStressEnv:
+    def test_stress_20_games(self) -> None:
+        """Run 20 games with full consistency checks at every step."""
+        from scripts.stress_test_env import run_stress_test
+
+        result = run_stress_test(n_games=20, max_steps=100, seed=42)
+        assert result["failed"] == 0, (
+            f"Stress test failed {result['failed']} games.\n"
+            f"First failure: {result['failures_detail'][0] if result['failures_detail'] else 'N/A'}"
+        )
+
+
 class TestBoardConsistencyMore:
     def test_revealed_pieces_increase_after_reveal(self) -> None:
         board = _empty_board()
