@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from jieqi import BOARD_SIZE, Color, Piece, PieceType
+from jieqi import BOARD_SIZE, Color, Move, Piece, PieceType
 from jieqi.board import Board
 from jieqi.move import pos_to_rc, rc_to_pos
 from jieqi.rules import (
@@ -619,3 +619,281 @@ class TestEdgeCases:
         # Both hidden rook and king should contribute
         assert rc_to_pos(5, 0) in from_positions  # hidden rook used
         assert rc_to_pos(9, 4) in from_positions  # king used
+
+
+# ==============================================================================
+#  Commit 13 — Supplemental rule tests
+# ==============================================================================
+
+
+class TestCannonHidden:
+    def test_hidden_cannon_follows_cannon_rules(self) -> None:
+        board = _make_empty_board()
+        _place(board, 9, 4, _piece(Color.RED, PieceType.KING))
+        _place(board, 0, 3, _piece(Color.BLACK, PieceType.KING))
+        _place(board, 5, 4, Piece(Color.RED, PieceType.CANNON, PieceType.HORSE, False))
+        _place(board, 5, 6, _piece(Color.RED, PieceType.PAWN))
+
+        moves = generate_piece_moves(board, 5, 4)
+        targets = {m.to_pos for m in moves}
+        assert rc_to_pos(5, 5) in targets  # empty before blocker
+        assert rc_to_pos(5, 6) not in targets  # blocker
+
+
+class TestHorseAllLegs:
+    def test_horse_up_leg_blocked(self) -> None:
+        board = _make_empty_board()
+        _place(board, 9, 4, _piece(Color.RED, PieceType.KING))
+        _place(board, 0, 3, _piece(Color.BLACK, PieceType.KING))
+        _place(board, 5, 4, _piece(Color.RED, PieceType.HORSE))
+        _place(board, 4, 4, _piece(Color.RED, PieceType.PAWN))
+        moves = generate_piece_moves(board, 5, 4)
+        targets = {m.to_pos for m in moves}
+        assert rc_to_pos(3, 3) not in targets
+        assert rc_to_pos(3, 5) not in targets
+        assert rc_to_pos(7, 3) in targets
+
+    def test_horse_down_leg_blocked(self) -> None:
+        board = _make_empty_board()
+        _place(board, 9, 4, _piece(Color.RED, PieceType.KING))
+        _place(board, 0, 3, _piece(Color.BLACK, PieceType.KING))
+        _place(board, 5, 4, _piece(Color.RED, PieceType.HORSE))
+        _place(board, 6, 4, _piece(Color.RED, PieceType.PAWN))
+        moves = generate_piece_moves(board, 5, 4)
+        targets = {m.to_pos for m in moves}
+        assert rc_to_pos(7, 3) not in targets
+        assert rc_to_pos(7, 5) not in targets
+        assert rc_to_pos(3, 3) in targets
+
+    def test_horse_left_leg_blocked(self) -> None:
+        board = _make_empty_board()
+        _place(board, 9, 4, _piece(Color.RED, PieceType.KING))
+        _place(board, 0, 3, _piece(Color.BLACK, PieceType.KING))
+        _place(board, 5, 4, _piece(Color.RED, PieceType.HORSE))
+        _place(board, 5, 3, _piece(Color.RED, PieceType.PAWN))
+        moves = generate_piece_moves(board, 5, 4)
+        targets = {m.to_pos for m in moves}
+        assert rc_to_pos(4, 2) not in targets
+        assert rc_to_pos(6, 2) not in targets
+        assert rc_to_pos(4, 6) in targets
+
+    def test_horse_right_leg_blocked(self) -> None:
+        board = _make_empty_board()
+        _place(board, 9, 4, _piece(Color.RED, PieceType.KING))
+        _place(board, 0, 3, _piece(Color.BLACK, PieceType.KING))
+        _place(board, 5, 4, _piece(Color.RED, PieceType.HORSE))
+        _place(board, 5, 5, _piece(Color.RED, PieceType.PAWN))
+        moves = generate_piece_moves(board, 5, 4)
+        targets = {m.to_pos for m in moves}
+        assert rc_to_pos(4, 6) not in targets
+        assert rc_to_pos(6, 6) not in targets
+        assert rc_to_pos(4, 2) in targets
+
+    def test_hidden_horse_respects_leg(self) -> None:
+        board = _make_empty_board()
+        _place(board, 9, 4, _piece(Color.RED, PieceType.KING))
+        _place(board, 0, 3, _piece(Color.BLACK, PieceType.KING))
+        _place(board, 5, 4, Piece(Color.RED, PieceType.HORSE, PieceType.ADVISOR, False))
+        _place(board, 4, 4, _piece(Color.RED, PieceType.PAWN))
+        moves = generate_piece_moves(board, 5, 4)
+        targets = {m.to_pos for m in moves}
+        assert rc_to_pos(3, 3) not in targets
+        assert rc_to_pos(3, 5) not in targets
+
+
+class TestElephantAllEyes:
+    def test_elephant_up_left_eye_blocked(self) -> None:
+        board = _make_empty_board()
+        _place(board, 9, 4, _piece(Color.RED, PieceType.KING))
+        _place(board, 0, 3, _piece(Color.BLACK, PieceType.KING))
+        _place(board, 7, 2, _piece(Color.RED, PieceType.ELEPHANT))
+        _place(board, 6, 1, _piece(Color.RED, PieceType.PAWN))
+        moves = generate_piece_moves(board, 7, 2)
+        targets = {m.to_pos for m in moves}
+        assert rc_to_pos(5, 0) not in targets
+        assert rc_to_pos(5, 4) in targets
+
+    def test_elephant_up_right_eye_blocked(self) -> None:
+        board = _make_empty_board()
+        _place(board, 9, 4, _piece(Color.RED, PieceType.KING))
+        _place(board, 0, 3, _piece(Color.BLACK, PieceType.KING))
+        _place(board, 7, 2, _piece(Color.RED, PieceType.ELEPHANT))
+        _place(board, 6, 3, _piece(Color.RED, PieceType.PAWN))
+        moves = generate_piece_moves(board, 7, 2)
+        targets = {m.to_pos for m in moves}
+        assert rc_to_pos(5, 4) not in targets
+        assert rc_to_pos(5, 0) in targets
+
+    def test_elephant_down_left_eye_blocked(self) -> None:
+        board = _make_empty_board()
+        _place(board, 9, 3, _piece(Color.RED, PieceType.KING))
+        _place(board, 0, 3, _piece(Color.BLACK, PieceType.KING))
+        _place(board, 7, 2, _piece(Color.RED, PieceType.ELEPHANT))
+        _place(board, 8, 1, _piece(Color.RED, PieceType.PAWN))
+        moves = generate_piece_moves(board, 7, 2)
+        targets = {m.to_pos for m in moves}
+        assert rc_to_pos(9, 0) not in targets  # eye (8,1) blocked
+        assert rc_to_pos(9, 4) in targets  # eye (8,3) clear
+
+    def test_elephant_down_right_eye_blocked(self) -> None:
+        board = _make_empty_board()
+        _place(board, 9, 3, _piece(Color.RED, PieceType.KING))
+        _place(board, 0, 3, _piece(Color.BLACK, PieceType.KING))
+        _place(board, 7, 2, _piece(Color.RED, PieceType.ELEPHANT))
+        _place(board, 8, 3, _piece(Color.RED, PieceType.PAWN))
+        moves = generate_piece_moves(board, 7, 2)
+        targets = {m.to_pos for m in moves}
+        assert rc_to_pos(9, 4) not in targets  # eye (8,3) blocked
+        assert rc_to_pos(9, 0) in targets  # eye (8,1) clear
+
+    def test_hidden_elephant_cannot_cross_river(self) -> None:
+        board = _make_empty_board()
+        _place(board, 9, 4, _piece(Color.RED, PieceType.KING))
+        _place(board, 0, 3, _piece(Color.BLACK, PieceType.KING))
+        _place(board, 5, 2, Piece(Color.RED, PieceType.ELEPHANT, PieceType.HORSE, False))
+        moves = generate_piece_moves(board, 5, 2)
+        targets = {m.to_pos for m in moves}
+        assert rc_to_pos(7, 0) in targets
+        assert rc_to_pos(7, 4) in targets
+        assert rc_to_pos(3, 0) not in targets
+        assert rc_to_pos(3, 4) not in targets
+
+    def test_hidden_elephant_eye_blocked(self) -> None:
+        board = _make_empty_board()
+        _place(board, 9, 4, _piece(Color.RED, PieceType.KING))
+        _place(board, 0, 3, _piece(Color.BLACK, PieceType.KING))
+        _place(board, 7, 2, Piece(Color.RED, PieceType.ELEPHANT, PieceType.ROOK, False))
+        _place(board, 6, 1, _piece(Color.RED, PieceType.PAWN))
+        moves = generate_piece_moves(board, 7, 2)
+        targets = {m.to_pos for m in moves}
+        assert rc_to_pos(5, 0) not in targets
+        assert rc_to_pos(5, 4) in targets
+
+
+class TestAdvisorHidden:
+    def test_hidden_advisor_follows_advisor_rules(self) -> None:
+        board = _make_empty_board()
+        _place(board, 9, 4, _piece(Color.RED, PieceType.KING))
+        _place(board, 0, 3, _piece(Color.BLACK, PieceType.KING))
+        _place(board, 8, 4, Piece(Color.RED, PieceType.ADVISOR, PieceType.ROOK, False))
+        moves = generate_piece_moves(board, 8, 4)
+        targets = {m.to_pos for m in moves}
+        expected = {rc_to_pos(7, 3), rc_to_pos(7, 5), rc_to_pos(9, 3), rc_to_pos(9, 5)}
+        assert targets == expected
+
+
+class TestKingsFacingExtended:
+    def test_moving_non_king_causes_facing_is_illegal(self) -> None:
+        board = _make_empty_board()
+        _place(board, 9, 4, _piece(Color.RED, PieceType.KING))
+        _place(board, 0, 4, _piece(Color.BLACK, PieceType.KING))
+        _place(board, 5, 4, _piece(Color.RED, PieceType.ROOK))
+        legal = generate_legal_moves(board, Color.RED)
+        legal_targets = {m.to_pos for m in legal}
+        assert rc_to_pos(5, 0) not in legal_targets  # off col 4 → facing
+        assert rc_to_pos(3, 4) in legal_targets  # stays on col 4
+        assert rc_to_pos(7, 4) in legal_targets
+
+    def test_check_and_facing_simultaneously(self) -> None:
+        board = _make_empty_board()
+        _place(board, 9, 4, _piece(Color.RED, PieceType.KING))
+        _place(board, 0, 4, _piece(Color.BLACK, PieceType.KING))
+        _place(board, 0, 0, _piece(Color.BLACK, PieceType.ROOK))  # attacks row 0
+        _place(board, 5, 4, _piece(Color.RED, PieceType.ROOK))
+        # Red rook at (5,4) blocks facing. Black rook at (0,0) doesn't give check.
+        legal = generate_legal_moves(board, Color.RED)
+        legal_targets = {m.to_pos for m in legal}
+        assert rc_to_pos(5, 0) not in legal_targets  # off col 4 → facing
+
+
+class TestPawnHidden:
+    def test_hidden_pawn_follows_pawn_rules(self) -> None:
+        board = _make_empty_board()
+        _place(board, 9, 4, _piece(Color.RED, PieceType.KING))
+        _place(board, 0, 3, _piece(Color.BLACK, PieceType.KING))
+        _place(board, 6, 4, Piece(Color.RED, PieceType.PAWN, PieceType.ROOK, False))
+        moves = generate_piece_moves(board, 6, 4)
+        targets = {m.to_pos for m in moves}
+        assert rc_to_pos(5, 4) in targets  # forward
+        assert rc_to_pos(6, 3) not in targets  # no sideways
+        assert rc_to_pos(6, 5) not in targets
+        assert rc_to_pos(7, 4) not in targets  # no backward
+
+
+class TestRevealRules:
+    def test_after_reveal_true_type_effective(self) -> None:
+        board = _make_empty_board()
+        _place(board, 9, 4, _piece(Color.RED, PieceType.KING))
+        _place(board, 0, 3, _piece(Color.BLACK, PieceType.KING))
+        _place(board, 5, 4, Piece(Color.RED, PieceType.ROOK, PieceType.PAWN, False))
+        board._turn = Color.RED
+        board.apply_move(Move(rc_to_pos(5, 4), rc_to_pos(5, 5)))
+        piece = board[rc_to_pos(5, 5)]
+        assert piece is not None
+        assert piece.revealed is True
+        assert piece.effective_type == PieceType.PAWN
+
+    def test_revealed_no_longer_moves_by_origin(self) -> None:
+        board = _make_empty_board()
+        _place(board, 9, 4, _piece(Color.RED, PieceType.KING))
+        _place(board, 0, 3, _piece(Color.BLACK, PieceType.KING))
+        _place(board, 5, 0, Piece(Color.RED, PieceType.ROOK, PieceType.PAWN, False))
+        board._turn = Color.RED
+        board.apply_move(Move(rc_to_pos(5, 0), rc_to_pos(5, 1)))
+        piece = board[rc_to_pos(5, 1)]
+        assert piece is not None and piece.revealed and piece.effective_type == PieceType.PAWN
+        board._turn = Color.RED
+        moves = generate_piece_moves(board, 5, 1)
+        targets = {m.to_pos for m in moves}
+        assert rc_to_pos(4, 1) in targets  # pawn forward
+        assert rc_to_pos(5, 8) not in targets  # not rook horizontal
+        assert rc_to_pos(8, 1) not in targets  # not rook vertical
+
+    def test_hidden_captures_hidden_attacker_revealed(self) -> None:
+        board = _make_empty_board()
+        _place(board, 9, 4, _piece(Color.RED, PieceType.KING))
+        _place(board, 0, 3, _piece(Color.BLACK, PieceType.KING))
+        _place(board, 5, 0, Piece(Color.RED, PieceType.ROOK, PieceType.PAWN, False))
+        _place(board, 5, 3, Piece(Color.BLACK, PieceType.HORSE, PieceType.CANNON, False))
+        board._turn = Color.RED
+        board.apply_move(Move(rc_to_pos(5, 0), rc_to_pos(5, 3)))
+        attacker = board[rc_to_pos(5, 3)]
+        assert attacker is not None and attacker.revealed
+        assert attacker.true_type == PieceType.PAWN
+        assert board[rc_to_pos(5, 0)] is None
+        assert len(board.captured) == 1
+        assert board.captured[0].true_type == PieceType.CANNON
+
+
+class TestWinLoss:
+    def test_king_captured_ends_game(self) -> None:
+        board = _make_empty_board()
+        _place(board, 9, 4, _piece(Color.RED, PieceType.KING))
+        _place(board, 0, 4, _piece(Color.BLACK, PieceType.KING))
+        _place(board, 5, 4, _piece(Color.RED, PieceType.ROOK))
+        board._turn = Color.RED
+        board.apply_move(Move(rc_to_pos(5, 4), rc_to_pos(0, 4)))
+        with pytest.raises(ValueError):
+            board.king_pos(Color.BLACK)
+
+    def test_non_king_captured_does_not_end(self) -> None:
+        board = _make_empty_board()
+        _place(board, 9, 4, _piece(Color.RED, PieceType.KING))
+        _place(board, 0, 3, _piece(Color.BLACK, PieceType.KING))
+        _place(board, 5, 0, _piece(Color.RED, PieceType.ROOK))
+        _place(board, 5, 3, _piece(Color.BLACK, PieceType.PAWN))
+        board._turn = Color.RED
+        board.apply_move(Move(rc_to_pos(5, 0), rc_to_pos(5, 3)))
+        board.king_pos(Color.RED)
+        board.king_pos(Color.BLACK)
+        assert board.turn == Color.BLACK
+
+    def test_checkmate_no_legal_moves(self) -> None:
+        board = _make_empty_board()
+        _place(board, 9, 4, _piece(Color.RED, PieceType.KING))
+        _place(board, 0, 4, _piece(Color.BLACK, PieceType.KING))
+        _place(board, 1, 8, _piece(Color.RED, PieceType.ROOK))  # attacks row 1
+        _place(board, 0, 7, _piece(Color.RED, PieceType.ROOK))  # attacks row 0
+        board._turn = Color.BLACK
+        legal = generate_legal_moves(board, Color.BLACK)
+        assert len(legal) == 0
