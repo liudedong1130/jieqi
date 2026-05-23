@@ -167,6 +167,118 @@ class TestTraining:
 
 
 # ---------------------------------------------------------------------------
+#  Value / return perspective correctness
+# ---------------------------------------------------------------------------
+
+
+class TestValuePerspective:
+    """Verify value targets are from the correct player's viewpoint."""
+
+    def test_red_wins_red_positive_black_negative(self) -> None:
+        """Red wins → Red states target≈+1, Black states target≈-1."""
+        from rl.trainer import PPOTrainer
+        from jieqi.env import JieqiEnv
+
+        PPOTrainer.set_seed(42)
+        env = JieqiEnv(max_steps=50)
+        trainer = PPOTrainer(env, episodes_per_update=1, gamma=1.0)
+
+        obs_dummy = env.reset(seed=42)
+        trainer._obs_buf = [obs_dummy] * 3
+        trainer._act_buf = [0, 0, 0]
+        trainer._logp_buf = [0.0, 0.0, 0.0]
+        trainer._val_buf = [0.1, -0.1, 0.2]     # Red, Black, Red
+        trainer._rew_buf = [0.0, 0.0, 1.0]       # Red wins on last move
+        trainer._done_buf = [False, False, True]
+        trainer._player_buf = [0, 1, 0]          # Red, Black, Red (alternating!)
+
+        advantages, returns = trainer._compute_gae()
+        # Red's states (idx 0, 2) → target ≈ +1.0
+        assert returns[0] > 0.5, f"Red step 0 return={returns[0]:.3f}, expected > 0.5"
+        assert returns[2] > 0.5, f"Red step 2 return={returns[2]:.3f}, expected > 0.5"
+        # Black's state (idx 1) → target ≈ -1.0
+        assert returns[1] < -0.5, f"Black step 1 return={returns[1]:.3f}, expected < -0.5"
+
+    def test_black_wins_black_positive_red_negative(self) -> None:
+        """Black wins → Black states target≈+1, Red states target≈-1."""
+        from rl.trainer import PPOTrainer
+        from jieqi.env import JieqiEnv
+
+        PPOTrainer.set_seed(42)
+        env = JieqiEnv(max_steps=50)
+        trainer = PPOTrainer(env, episodes_per_update=1, gamma=1.0)
+
+        obs_dummy = env.reset(seed=42)
+        # Red(0) → Black(1) → Red(0) → Black(1, wins!)
+        trainer._obs_buf = [obs_dummy] * 4
+        trainer._act_buf = [0, 0, 0, 0]
+        trainer._logp_buf = [0.0, 0.0, 0.0, 0.0]
+        trainer._val_buf = [0.1, -0.1, 0.05, -0.2]  # Red, Black, Red, Black
+        trainer._rew_buf = [0.0, 0.0, 0.0, 1.0]      # Black wins on last move
+        trainer._done_buf = [False, False, False, True]
+        trainer._player_buf = [0, 1, 0, 1]             # alternating!
+
+        advantages, returns = trainer._compute_gae()
+        # Red's states (idx 0, 2) → target ≈ -1.0
+        assert returns[0] < -0.5, f"Red step 0 return={returns[0]:.3f}, expected < -0.5"
+        assert returns[2] < -0.5, f"Red step 2 return={returns[2]:.3f}, expected < -0.5"
+        # Black's states (idx 1, 3) → target ≈ +1.0
+        assert returns[1] > 0.5, f"Black step 1 return={returns[1]:.3f}, expected > 0.5"
+        assert returns[3] > 0.5, f"Black step 3 return={returns[3]:.3f}, expected > 0.5"
+
+    def test_draw_all_targets_zero(self) -> None:
+        """Draw/truncated → all targets ≈ 0."""
+        from rl.trainer import PPOTrainer
+        from jieqi.env import JieqiEnv
+
+        PPOTrainer.set_seed(42)
+        env = JieqiEnv(max_steps=50)
+        trainer = PPOTrainer(env, episodes_per_update=1, gamma=1.0)
+
+        obs_dummy = env.reset(seed=42)
+        trainer._obs_buf = [obs_dummy] * 3
+        trainer._act_buf = [0, 0, 0]
+        trainer._logp_buf = [0.0, 0.0, 0.0]
+        trainer._val_buf = [0.1, -0.1, 0.05]  # all near zero
+        trainer._rew_buf = [0.0, 0.0, 0.0]     # no winner
+        trainer._done_buf = [False, False, True]
+        trainer._player_buf = [0, 1, 0]
+
+        advantages, returns = trainer._compute_gae()
+        # All returns should be close to 0
+        for i in range(3):
+            assert abs(returns[i]) < 0.5, f"step {i} return={returns[i]:.3f}, expected near 0"
+
+    def test_gae_with_discount(self) -> None:
+        """With gamma < 1, returns should be appropriately discounted."""
+        from rl.trainer import PPOTrainer
+        from jieqi.env import JieqiEnv
+
+        PPOTrainer.set_seed(42)
+        env = JieqiEnv(max_steps=50)
+        trainer = PPOTrainer(env, episodes_per_update=1, gamma=0.9)
+
+        obs_dummy = env.reset(seed=42)
+        trainer._obs_buf = [obs_dummy] * 3
+        trainer._act_buf = [0, 0, 0]
+        trainer._logp_buf = [0.0, 0.0, 0.0]
+        trainer._val_buf = [0.0, 0.0, 0.0]     # values at 0
+        trainer._rew_buf = [0.0, 0.0, 1.0]     # Red wins
+        trainer._done_buf = [False, False, True]
+        trainer._player_buf = [0, 1, 0]          # Red, Black, Red
+
+        advantages, returns = trainer._compute_gae()
+        # Without discount: returns = [1, -1, 1]
+        # With gamma=0.9:
+        #   t=2: delta=1, gae=1, adv=1, ret=1
+        #   t=1: delta=0, gae=0+0.9*0.95*(-1)=-0.855, adv=-0.855, ret=-0.855
+        #   t=0: delta=0, gae=0+0.9*0.95*(-(-0.855))=0.731, adv=0.731, ret=0.731
+        assert returns[2] == pytest.approx(1.0)
+        assert returns[1] > -1.0  # discounted
+        assert returns[0] > 0.5   # discounted but positive
+
+
+# ---------------------------------------------------------------------------
 #  Checkpoint
 # ---------------------------------------------------------------------------
 

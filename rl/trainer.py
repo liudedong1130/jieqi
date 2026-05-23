@@ -69,10 +69,15 @@ class PPOTrainer:
     # ------------------------------------------------------------------
 
     def collect_episode(self, seed: int | None = None) -> dict:
+        """Run one episode of self-play and buffer all transitions.
+
+        The episode return is reported from the perspective of the *first*
+        player (RED).  +1 = RED won, -1 = RED lost, 0 = draw/truncated.
+        """
         obs = self.env.reset(seed=seed)
         done = False
         steps = 0
-        ep_return = 0.0
+        first_player = self.env.current_player()
 
         while not done:
             mover = self.env.current_player()
@@ -91,10 +96,20 @@ class PPOTrainer:
 
             obs = next_obs
             steps += 1
-            if terminated:
-                ep_return = 1.0 if reward > 0 else (-1.0 if reward < 0 else 0.0)
-            elif truncated:
+
+        # Determine episode return from first player's perspective
+        if any(self._rew_buf):
+            # last reward is from the winner's perspective
+            last_rew = self._rew_buf[-1]
+            last_player = self._player_buf[-1]
+            if last_rew > 0:
+                ep_return = 1.0 if last_player == first_player else -1.0
+            elif last_rew < 0:
+                ep_return = -1.0 if last_player == first_player else 1.0
+            else:
                 ep_return = 0.0
+        else:
+            ep_return = 0.0  # truncated
 
         self._episode_count += 1
         return {"steps": steps, "return": ep_return}
@@ -118,6 +133,25 @@ class PPOTrainer:
     #  GAE
     # ------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    #  Value function definition
+    # ------------------------------------------------------------------
+    #  V(s) = E[ final return | state s, current player to move ]
+    #
+    #  The final return is +1 if the *current player* wins, -1 if they
+    #  lose, 0 for a draw.  Because the game is zero-sum, the opponent's
+    #  value is the negation:  V_opp(s) = -V_own(s).
+    #
+    #  In self-play every step swaps the current player, so the TD
+    #  target for step t uses *negated* next-value:
+    #      target_t = r_t + γ · (-V_{t+1}) · (1 - done_t)
+    #
+    #  Likewise, when GAE accumulates multi-step TD errors the sign
+    #  flips at each step because each δ_{t+k} is from a different
+    #  player's perspective:
+    #      A_t = δ_t - (γλ)·δ_{t+1} + (γλ)²·δ_{t+2} - …
+    # ------------------------------------------------------------------
+
     def _compute_gae(self) -> tuple[np.ndarray, np.ndarray]:
         T = len(self._rew_buf)
         advantages = np.zeros(T, dtype=np.float32)
@@ -127,10 +161,19 @@ class PPOTrainer:
             if t == T - 1:
                 next_val = 0.0
             else:
+                # next value is from opponent → negate for zero-sum
                 next_val = -self._val_buf[t + 1]
+
             mask = 1.0 - float(self._done_buf[t])
             delta = self._rew_buf[t] + self.gamma * next_val * mask - self._val_buf[t]
-            gae = delta + self.gamma * self.gae_lambda * mask * gae
+
+            if t == T - 1:
+                gae = delta
+            else:
+                # accumulated gae so far is from opponent's perspective;
+                # negate it before adding to the current player's δ_t
+                gae = delta + self.gamma * self.gae_lambda * mask * (-gae)
+
             advantages[t] = gae
 
         returns = advantages + np.array(self._val_buf, dtype=np.float32)
