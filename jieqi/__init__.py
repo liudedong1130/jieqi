@@ -12,6 +12,7 @@ from .constants import (
     Color,
     PieceType,
 )
+from .env import JieqiEnv
 from .move import (
     Move,
     decode_action,
@@ -40,6 +41,7 @@ __all__ = [
     "Piece",
     "Move",
     "Board",
+    "JieqiEnv",
     "pos_to_rc",
     "rc_to_pos",
     "encode_action",

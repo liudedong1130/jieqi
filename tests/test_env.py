@@ -276,6 +276,212 @@ class TestBoardConsistency:
         assert len(board.hidden_pieces()) == 0
         assert len(board.revealed_pieces()) == 3  # two kings + revealed attacker
 
+# ---------------------------------------------------------------------------
+#  JieqiEnv interface tests
+# ---------------------------------------------------------------------------
+
+
+class TestJieqiEnvReset:
+    def test_reset_returns_observation(self) -> None:
+        from jieqi.env import JieqiEnv
+
+        env = JieqiEnv()
+        obs = env.reset(seed=42)
+        assert isinstance(obs, dict)
+        assert "pieces" in obs
+        assert "current_player" in obs
+        assert obs["current_player"] == int(Color.RED)
+        assert len(obs["pieces"]) == 32
+
+    def test_observation_does_not_leak_true_type(self) -> None:
+        """Hidden pieces in observation show origin_type, not true_type."""
+        from jieqi.env import JieqiEnv
+
+        env = JieqiEnv()
+        env.reset(seed=42)
+        obs = env.observation()
+
+        for p in obs["pieces"]:
+            # Find the corresponding piece on the board
+            board_piece = env.board[p["pos"]]
+            assert board_piece is not None
+            if not board_piece.revealed:
+                # Hidden: obs "type" must equal origin_type, not true_type
+                assert p["type"] == int(board_piece.origin_type)
+                assert p["revealed"] is False
+            else:
+                # Revealed: obs "type" equals true_type
+                assert p["type"] == int(board_piece.true_type)
+                assert p["revealed"] is True
+
+
+class TestJieqiEnvLegalActions:
+    def test_legal_actions_returns_list(self) -> None:
+        from jieqi.env import JieqiEnv
+
+        env = JieqiEnv()
+        env.reset(seed=42)
+        actions = env.legal_actions()
+        assert isinstance(actions, list)
+        assert len(actions) > 0
+        assert all(isinstance(a, int) for a in actions)
+
+    def test_legal_action_mask_shape(self) -> None:
+        from jieqi.env import JieqiEnv
+
+        env = JieqiEnv()
+        env.reset(seed=42)
+        mask = env.legal_action_mask()
+        assert mask.shape == (8100,)
+
+    def test_legal_action_mask_consistency(self) -> None:
+        from jieqi.env import JieqiEnv
+
+        env = JieqiEnv()
+        env.reset(seed=42)
+        actions = env.legal_actions()
+        mask = env.legal_action_mask()
+        assert mask.sum() == len(actions)
+        for a in actions:
+            assert mask[a] == 1
+
+
+class TestJieqiEnvStep:
+    def test_step_switches_current_player(self) -> None:
+        from jieqi.env import JieqiEnv
+
+        env = JieqiEnv()
+        env.reset(seed=42)
+        player_before = env.current_player()
+        actions = env.legal_actions()
+        obs, reward, terminated, truncated, info = env.step(actions[0])
+        assert env.current_player() != player_before
+
+    def test_step_illegal_action_raises(self) -> None:
+        from jieqi.env import JieqiEnv
+
+        env = JieqiEnv()
+        env.reset(seed=42)
+        # Find an illegal action (action 0 might be legal)
+        legal = set(env.legal_actions())
+        illegal = next(a for a in range(8100) if a not in legal)
+        with pytest.raises(ValueError):
+            env.step(illegal)
+
+    def test_step_returns_expected_tuple(self) -> None:
+        from jieqi.env import JieqiEnv
+
+        env = JieqiEnv()
+        env.reset(seed=42)
+        actions = env.legal_actions()
+        obs, reward, terminated, truncated, info = env.step(actions[0])
+        assert isinstance(obs, dict)
+        assert isinstance(reward, float)
+        assert isinstance(terminated, bool)
+        assert isinstance(truncated, bool)
+        assert isinstance(info, dict)
+
+
+class TestJieqiEnvTermination:
+    def test_king_capture_terminates(self) -> None:
+        """When a king is captured, terminated=True with reward=1.0."""
+        from jieqi.env import JieqiEnv
+
+        env = JieqiEnv(max_steps=100)
+        _setup_king_capture(env)
+        # Red rook at (5,0) can capture Black king at (0,0)
+        # The action: rook moves from (5,0) to (0,0)
+        action = _encode(5, 0, 0, 0)
+        obs, reward, terminated, truncated, info = env.step(action)
+        assert terminated is True
+        assert reward == 1.0
+
+    def test_max_steps_truncation(self) -> None:
+        from jieqi.env import JieqiEnv
+
+        env = JieqiEnv(max_steps=10)
+        env.reset(seed=42)
+        truncated_seen = False
+        for _ in range(15):
+            actions = env.legal_actions()
+            if not actions:
+                break
+            obs, reward, terminated, truncated, info = env.step(actions[0])
+            if truncated:
+                truncated_seen = True
+                break
+            if terminated:
+                break
+        assert truncated_seen, "Should have been truncated after max_steps"
+
+
+class TestObservationNoLeak:
+    def test_hidden_true_type_not_in_observation(self) -> None:
+        from jieqi.env import JieqiEnv
+
+        env = JieqiEnv()
+        env.reset(seed=42)
+        obs = env.observation()
+        # Verify no piece dict contains "true_type" key
+        for p in obs["pieces"]:
+            assert "true_type" not in p
+
+
+class TestRandomSelfPlay:
+    def test_random_agent_plays_full_episode(self) -> None:
+        """RandomAgent completes a full episode without errors."""
+        from jieqi.env import JieqiEnv
+        from agents.random_agent import RandomAgent
+
+        env = JieqiEnv(max_steps=300)
+        env.reset(seed=123)
+        agent_red = RandomAgent(seed=1)
+        agent_black = RandomAgent(seed=2)
+
+        done = False
+        move_count = 0
+        while not done:
+            if env.current_player() == 0:
+                action = agent_red.act(env)
+            else:
+                action = agent_black.act(env)
+            obs, reward, terminated, truncated, info = env.step(action)
+            move_count += 1
+            done = terminated or truncated
+
+        assert move_count > 0
+        assert done
+        # Episode should not run forever
+        assert move_count <= 300, f"Episode took {move_count} moves"
+
+
+# ---------------------------------------------------------------------------
+#  Helpers for env tests
+# ---------------------------------------------------------------------------
+
+
+def _encode(fr: int, fc: int, tr: int, tc: int) -> int:
+    from jieqi.move import encode_action, rc_to_pos
+
+    return encode_action(rc_to_pos(fr, fc), rc_to_pos(tr, tc))
+
+
+def _setup_king_capture(env: "JieqiEnv") -> None:
+    """Set up a position where Red can immediately capture Black's king."""
+    b = env.board
+    for pos in range(BOARD_SIZE):
+        b.set_cell(pos, None)
+    b._captured = []
+    b._turn = Color.RED
+    # Black king exposed
+    b.set_cell(rc_to_pos(0, 0), _piece(Color.BLACK, PieceType.KING, PieceType.KING, True))
+    # Red king safe
+    b.set_cell(rc_to_pos(9, 4), _piece(Color.RED, PieceType.KING, PieceType.KING, True))
+    # Red rook can capture Black king
+    b.set_cell(rc_to_pos(5, 0), _piece(Color.RED, PieceType.ROOK, PieceType.ROOK, True))
+
+
+class TestBoardConsistencyMore:
     def test_revealed_pieces_increase_after_reveal(self) -> None:
         board = _empty_board()
         _place(board, 9, 4, _piece(Color.RED, PieceType.KING, PieceType.KING, True))
