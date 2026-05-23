@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import math
+import random
 from collections import defaultdict
 
 import numpy as np
@@ -13,29 +13,7 @@ from rl.model import PolicyValueNet
 
 
 class PPOTrainer:
-    """Minimal PPO trainer for Jieqi self-play.
-
-    Parameters
-    ----------
-    env : JieqiEnv
-        Environment instance (will be reset internally).
-    lr : float
-        Learning rate.
-    gamma : float
-        Discount factor.
-    gae_lambda : float
-        GAE lambda parameter.
-    clip_ratio : float
-        PPO clipping epsilon.
-    entropy_coef : float
-        Entropy bonus coefficient.
-    value_coef : float
-        Value loss coefficient.
-    update_epochs : int
-        Number of optimisation epochs per update.
-    episodes_per_update : int
-        Collect this many episodes before each PPO update.
-    """
+    """Minimal PPO trainer for Jieqi self-play."""
 
     def __init__(
         self,
@@ -49,6 +27,7 @@ class PPOTrainer:
         value_coef: float = 0.5,
         update_epochs: int = 4,
         episodes_per_update: int = 8,
+        device: str | None = None,
     ) -> None:
         self.env = env
         self.gamma = gamma
@@ -59,11 +38,10 @@ class PPOTrainer:
         self.update_epochs = update_epochs
         self.episodes_per_update = episodes_per_update
 
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
         self.model = PolicyValueNet().to(self.device)
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
 
-        # Buffers for trajectory collection
         self._obs_buf: list[np.ndarray] = []
         self._act_buf: list[int] = []
         self._logp_buf: list[float] = []
@@ -75,16 +53,26 @@ class PPOTrainer:
         self._episode_count = 0
 
     # ------------------------------------------------------------------
+    #  Seed
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def set_seed(seed: int) -> None:
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
+
+    # ------------------------------------------------------------------
     #  Trajectory collection
     # ------------------------------------------------------------------
 
     def collect_episode(self, seed: int | None = None) -> dict:
-        """Run one episode of self-play, store trajectory, return stats."""
         obs = self.env.reset(seed=seed)
         done = False
         steps = 0
-        ep_reward = 0.0
-        illegal_count = 0
+        ep_return = 0.0
 
         while not done:
             mover = self.env.current_player()
@@ -103,14 +91,13 @@ class PPOTrainer:
 
             obs = next_obs
             steps += 1
-            ep_reward += reward
+            if terminated:
+                ep_return = 1.0 if reward > 0 else (-1.0 if reward < 0 else 0.0)
+            elif truncated:
+                ep_return = 0.0
 
         self._episode_count += 1
-        return {
-            "steps": steps,
-            "reward": ep_reward,
-            "illegal": illegal_count,
-        }
+        return {"steps": steps, "return": ep_return}
 
     @torch.no_grad()
     def _select_action(self, obs: np.ndarray) -> tuple[int, float, float]:
@@ -128,16 +115,10 @@ class PPOTrainer:
         return action, log_prob, value.item()
 
     # ------------------------------------------------------------------
-    #  GAE computation
+    #  GAE
     # ------------------------------------------------------------------
 
     def _compute_gae(self) -> tuple[np.ndarray, np.ndarray]:
-        """Compute advantages and returns for the buffered trajectory.
-
-        Handles the zero-sum perspective flip: every step the current
-        player changes, so ``V(s_{t+1})`` is from the opponent's
-        perspective and must be negated.
-        """
         T = len(self._rew_buf)
         advantages = np.zeros(T, dtype=np.float32)
         gae = 0.0
@@ -146,9 +127,7 @@ class PPOTrainer:
             if t == T - 1:
                 next_val = 0.0
             else:
-                # next value is from opponent → negate for zero-sum
                 next_val = -self._val_buf[t + 1]
-
             mask = 1.0 - float(self._done_buf[t])
             delta = self._rew_buf[t] + self.gamma * next_val * mask - self._val_buf[t]
             gae = delta + self.gamma * self.gae_lambda * mask * gae
@@ -162,7 +141,6 @@ class PPOTrainer:
     # ------------------------------------------------------------------
 
     def update(self) -> dict:
-        """Run one PPO update on all buffered episodes, then clear buffer."""
         if len(self._rew_buf) == 0:
             return {}
 
@@ -174,7 +152,7 @@ class PPOTrainer:
         adv_t = torch.from_numpy(advantages).to(self.device)
         ret_t = torch.from_numpy(returns).to(self.device)
 
-        # Normalise advantages
+        # normalize
         adv_t = (adv_t - adv_t.mean()) / (adv_t.std() + 1e-8)
 
         stats: dict[str, list[float]] = defaultdict(list)
@@ -188,6 +166,10 @@ class PPOTrainer:
             entropy = dist.entropy().mean()
 
             ratio = torch.exp(new_logp - old_logp_t)
+            with torch.no_grad():
+                approx_kl = ((new_logp - old_logp_t) ** 2).mean()
+                clip_frac = ((ratio - 1).abs() > self.clip_ratio).float().mean()
+
             clipped = torch.clamp(ratio, 1.0 - self.clip_ratio, 1.0 + self.clip_ratio)
             policy_loss = -torch.min(ratio * adv_t, clipped * adv_t).mean()
 
@@ -195,6 +177,12 @@ class PPOTrainer:
             entropy_loss = -entropy
 
             loss = policy_loss + self.value_coef * value_loss + self.entropy_coef * entropy_loss
+
+            # NaN guard
+            if torch.isnan(loss) or torch.isinf(loss):
+                stats["nan_detected"] = [1.0]
+                self._clear_buf()
+                return {k: float(np.mean(v)) for k, v in stats.items()}
 
             self.optimizer.zero_grad()
             loss.backward()
@@ -205,8 +193,20 @@ class PPOTrainer:
             stats["value_loss"].append(value_loss.item())
             stats["entropy"].append(entropy.item())
             stats["total_loss"].append(loss.item())
+            stats["approx_kl"].append(approx_kl.item())
+            stats["clip_frac"].append(clip_frac.item())
 
-        # Clear buffers
+        # explained variance
+        with torch.no_grad():
+            _, vals = self.model(obs_t)
+            vals = vals.squeeze(-1).cpu().numpy()
+        ev = 1.0 - np.var(ret_t.cpu().numpy() - vals) / (np.var(ret_t.cpu().numpy()) + 1e-8)
+        stats["explained_var"].append(float(ev))
+
+        self._clear_buf()
+        return {k: float(np.mean(v)) for k, v in stats.items()}
+
+    def _clear_buf(self) -> None:
         self._obs_buf.clear()
         self._act_buf.clear()
         self._logp_buf.clear()
@@ -214,8 +214,6 @@ class PPOTrainer:
         self._rew_buf.clear()
         self._done_buf.clear()
         self._player_buf.clear()
-
-        return {k: float(np.mean(v)) for k, v in stats.items()}
 
     # ------------------------------------------------------------------
     #  Checkpoint
@@ -232,7 +230,7 @@ class PPOTrainer:
         )
 
     def load(self, path: str) -> None:
-        ckpt = torch.load(path, map_location=self.device)
+        ckpt = torch.load(path, map_location=self.device, weights_only=False)
         self.model.load_state_dict(ckpt["model"])
         self.optimizer.load_state_dict(ckpt["optimizer"])
         self._episode_count = ckpt.get("episode", 0)
