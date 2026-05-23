@@ -9,7 +9,7 @@ import torch
 from torch.distributions import Categorical
 
 from jieqi.env import JieqiEnv
-from rl.model import PolicyValueNet, ACTION_SPACE, NUM_CHANNELS
+from rl.model import PolicyValueNet, ResidualPolicyValueNet, create_model, ACTION_SPACE, NUM_CHANNELS
 
 
 # ---------------------------------------------------------------------------
@@ -321,6 +321,118 @@ class TestCheckpoint:
 
 
 # ---------------------------------------------------------------------------
+#  ResNet model
+# ---------------------------------------------------------------------------
+
+
+class TestResNet:
+    def test_forward_shapes(self) -> None:
+        model = ResidualPolicyValueNet(channels=64, num_blocks=2)
+        model.eval()
+        x = torch.randn(4, NUM_CHANNELS, 10, 9)
+        with torch.no_grad():
+            logits, value = model(x)
+        assert logits.shape == (4, ACTION_SPACE)
+        assert value.shape == (4, 1)
+
+    def test_value_in_range(self) -> None:
+        model = ResidualPolicyValueNet(channels=64, num_blocks=2)
+        model.eval()
+        x = torch.randn(16, NUM_CHANNELS, 10, 9)
+        with torch.no_grad():
+            _, value = model(x)
+        assert value.min() >= -1.0
+        assert value.max() <= 1.0
+
+    def test_config(self) -> None:
+        model = ResidualPolicyValueNet(channels=128, num_blocks=4)
+        cfg = model.config()
+        assert cfg["type"] == "resnet"
+        assert cfg["channels"] == 128
+        assert cfg["num_blocks"] == 4
+
+    def test_create_model_factory(self) -> None:
+        m1 = create_model("simple_cnn")
+        assert isinstance(m1, PolicyValueNet)
+        m2 = create_model("resnet", channels=64, num_blocks=2)
+        assert isinstance(m2, ResidualPolicyValueNet)
+        assert m2.channels == 64
+        assert m2.num_blocks == 2
+
+
+class TestResNetCheckpoint:
+    def test_save_load_resnet(self) -> None:
+        from rl.trainer import PPOTrainer
+
+        env = JieqiEnv(max_steps=50)
+        trainer = PPOTrainer(
+            env, episodes_per_update=2,
+            model_type="resnet", model_kwargs={"channels": 64, "num_blocks": 2},
+        )
+        trainer.collect_episode(seed=1)
+        trainer.collect_episode(seed=2)
+        trainer.update()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "resnet.pt")
+            trainer.save(path)
+            assert os.path.exists(path)
+
+            env2 = JieqiEnv(max_steps=50)
+            trainer2 = PPOTrainer(env2)
+            trainer2.load(path)
+            assert isinstance(trainer2.model, ResidualPolicyValueNet)
+            assert trainer2.model.channels == 64
+            for p1, p2 in zip(trainer.model.parameters(), trainer2.model.parameters()):
+                assert torch.allclose(p1, p2)
+
+    def test_legacy_simple_cnn_checkpoint_still_loads(self) -> None:
+        """Checkpoints saved before model_config was added must still load."""
+        from rl.trainer import PPOTrainer
+
+        env = JieqiEnv(max_steps=50)
+        trainer = PPOTrainer(env, episodes_per_update=2)
+        trainer.collect_episode(seed=1)
+        trainer.collect_episode(seed=2)
+        trainer.update()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "legacy.pt")
+            # Save without model_config (simulate old checkpoint)
+            torch.save({
+                "model": trainer.model.state_dict(),
+                "optimizer": trainer.optimizer.state_dict(),
+                "episode": 5,
+            }, path)
+
+            env2 = JieqiEnv(max_steps=50)
+            trainer2 = PPOTrainer(env2)
+            trainer2.load(path)
+            assert trainer2.episode_count == 5
+
+    def test_policy_agent_loads_resnet_checkpoint(self) -> None:
+        from rl.trainer import PPOTrainer
+        from agents.policy_agent import PolicyAgent
+
+        env = JieqiEnv(max_steps=50)
+        trainer = PPOTrainer(
+            env, episodes_per_update=2,
+            model_type="resnet", model_kwargs={"channels": 64, "num_blocks": 2},
+        )
+        trainer.collect_episode(seed=1)
+        trainer.collect_episode(seed=2)
+        trainer.update()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "resnet.pt")
+            trainer.save(path)
+            agent = PolicyAgent(path)
+            assert isinstance(agent.model, ResidualPolicyValueNet)
+            action = agent.select_action(env)
+            assert action >= 0
+
+
+# ---------------------------------------------------------------------------
 #  Script
 # ---------------------------------------------------------------------------
 
@@ -378,6 +490,25 @@ class TestTrainScript:
             assert "episode" in lines[0]
             assert "approx_kl" in lines[0]
             assert "explained_var" in lines[0]
+
+    def test_train_with_resnet(self) -> None:
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            script = Path(__file__).parent.parent / "scripts" / "train_ppo.py"
+            result = subprocess.run(
+                [
+                    sys.executable, str(script),
+                    "--model", "resnet", "--channels", "32", "--blocks", "1",
+                    "--episodes", "8", "--max-steps", "50",
+                    "--episodes-per-update", "4", "--log-interval", "4",
+                    "--eval-interval", "0", "--checkpoint-dir", tmpdir, "--seed", "42",
+                ],
+                capture_output=True, text=True, timeout=180,
+            )
+            assert result.returncode == 0, f"ResNet train failed:\n{result.stderr}"
 
     def test_best_checkpoint_saved(self) -> None:
         import subprocess

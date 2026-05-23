@@ -7,7 +7,7 @@ import numpy as np
 import torch
 from torch.distributions import Categorical
 
-from rl.model import PolicyValueNet
+from rl.model import _model_from_config, PolicyValueNet
 
 if TYPE_CHECKING:
     from jieqi.env import JieqiEnv
@@ -32,8 +32,11 @@ class PolicyAgent:
         seed: int | None = None,
     ) -> None:
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model = PolicyValueNet().to(self.device)
         ckpt = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
+        if "model_config" in ckpt:
+            self.model = _model_from_config(ckpt["model_config"]).to(self.device)
+        else:
+            self.model = PolicyValueNet().to(self.device)
         self.model.load_state_dict(ckpt["model"])
         self.model.eval()
         self._deterministic = deterministic

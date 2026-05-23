@@ -9,7 +9,7 @@ import torch.nn as nn
 from torch.distributions import Categorical
 
 from jieqi.env import JieqiEnv
-from rl.model import PolicyValueNet
+from rl.model import PolicyValueNet, create_model
 
 
 class PPOTrainer:
@@ -28,6 +28,8 @@ class PPOTrainer:
         update_epochs: int = 4,
         episodes_per_update: int = 8,
         device: str | None = None,
+        model_type: str = "simple_cnn",
+        model_kwargs: dict | None = None,
     ) -> None:
         self.env = env
         self.gamma = gamma
@@ -39,7 +41,9 @@ class PPOTrainer:
         self.episodes_per_update = episodes_per_update
 
         self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
-        self.model = PolicyValueNet().to(self.device)
+        self._model_type = model_type
+        self._model_kwargs = model_kwargs or {}
+        self.model = create_model(model_type, **self._model_kwargs).to(self.device)
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
 
         self._obs_buf: list[np.ndarray] = []
@@ -263,19 +267,26 @@ class PPOTrainer:
     # ------------------------------------------------------------------
 
     def save(self, path: str) -> None:
-        torch.save(
-            {
-                "model": self.model.state_dict(),
-                "optimizer": self.optimizer.state_dict(),
-                "episode": self._episode_count,
-            },
-            path,
-        )
+        ckpt: dict = {
+            "model": self.model.state_dict(),
+            "model_config": {"type": self._model_type, **self._model_kwargs},
+            "optimizer": self.optimizer.state_dict(),
+            "episode": self._episode_count,
+        }
+        torch.save(ckpt, path)
 
     def load(self, path: str) -> None:
+        from rl.model import _model_from_config
+
         ckpt = torch.load(path, map_location=self.device, weights_only=False)
+        if "model_config" in ckpt:
+            self._model_type = ckpt["model_config"]["type"]
+            self._model_kwargs = {k: v for k, v in ckpt["model_config"].items() if k != "type"}
+            self.model = _model_from_config(ckpt["model_config"]).to(self.device)
+            self.optimizer = torch.optim.Adam(self.model.parameters(), lr=3e-4)
         self.model.load_state_dict(ckpt["model"])
-        self.optimizer.load_state_dict(ckpt["optimizer"])
+        if "optimizer" in ckpt:
+            self.optimizer.load_state_dict(ckpt["optimizer"])
         self._episode_count = ckpt.get("episode", 0)
 
     @property

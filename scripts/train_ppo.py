@@ -82,6 +82,9 @@ def main() -> None:
     p.add_argument("--checkpoint-dir", type=str, default="ckpt")
     p.add_argument("--resume", type=str, default=None)
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--model", type=str, default="simple_cnn", choices=["simple_cnn", "resnet"])
+    p.add_argument("--channels", type=int, default=128, help="ResNet channels")
+    p.add_argument("--blocks", type=int, default=3, help="ResNet residual blocks")
     p.add_argument("--device", type=str, default=None)
     args = p.parse_args()
 
@@ -110,6 +113,8 @@ def main() -> None:
         update_epochs=args.update_epochs,
         episodes_per_update=args.episodes_per_update,
         device=args.device,
+        model_type=args.model,
+        model_kwargs={"channels": args.channels, "num_blocks": args.blocks} if args.model == "resnet" else {},
     )
 
     if args.resume:
