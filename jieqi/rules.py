@@ -82,8 +82,9 @@ def _king_moves(board: Board, row: int, col: int, color: Color, revealed: bool =
         nr, nc = row + dr, col + dc
         if not is_valid_rc(nr, nc):
             continue
-        # Palace restriction only for revealed king (§Jieqi: hidden can leave)
-        if revealed and not _in_palace(nr, nc, color):
+        # Kings are always revealed in normal Jieqi, but keep the palace rule
+        # here so an invalid hidden-king test position cannot leave the palace.
+        if not _in_palace(nr, nc, color):
             continue
         to_pos = rc_to_pos(nr, nc)
         if _can_occupy(board, to_pos, color):
@@ -101,7 +102,8 @@ def _advisor_moves(board: Board, row: int, col: int, color: Color, revealed: boo
         nr, nc = row + dr, col + dc
         if not is_valid_rc(nr, nc):
             continue
-        # §Jieqi: advisors can leave the palace (unlike standard Xiangqi)
+        if not revealed and not _in_palace(nr, nc, color):
+            continue
         to_pos = rc_to_pos(nr, nc)
         if _can_occupy(board, to_pos, color):
             moves.append(Move(from_pos, to_pos))
@@ -120,7 +122,11 @@ def _elephant_moves(board: Board, row: int, col: int, color: Color, revealed: bo
         eye_r, eye_c = row + er, col + ec
         if not is_valid_rc(nr, nc):
             continue
-        # §Jieqi: elephants CAN cross the river (unlike standard Xiangqi)
+        if not revealed:
+            if color == Color.RED and nr < 5:
+                continue
+            if color == Color.BLACK and nr > 4:
+                continue
         # Eye blocked
         if board[rc_to_pos(eye_r, eye_c)] is not None:
             continue
@@ -259,9 +265,9 @@ def generate_piece_moves(board: Board, row: int, col: int) -> list[Move]:
     blocking, palace/river constraints) but may leave the own king in check
     or cause the two kings to face each other.
 
-    In Jieqi, hidden pieces CAN cross the river / leave the palace —
-    they follow the movement *pattern* of their origin_type but without
-    zone restrictions, since their true identity is unknown.
+    In Jieqi, hidden pieces follow the full Xiangqi movement rules of their
+    origin_type, including advisor palace and elephant river restrictions.
+    Once revealed, advisors and elephants use the Jieqi-specific relaxed zones.
     """
     piece = board[rc_to_pos(row, col)]
     if piece is None:

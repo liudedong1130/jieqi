@@ -7,6 +7,7 @@ from typing import Any
 import numpy as np
 
 from agents.belief_mcts_agent import BeliefMCTSAgent, BeliefState, sample_determinization
+from agents.greedy_agent import HIDDEN_ESTIMATE, PIECE_VALUE
 from jieqi.env import JieqiEnv
 from jieqi.move import pos_to_rc
 from rl.ismcts import ISMCTSAgent
@@ -42,8 +43,10 @@ def _format_move(action: int) -> str:
 
 def _check_capture(env: JieqiEnv, action: int) -> str | None:
     to_pos = action % 90
+    r, c = pos_to_rc(to_pos)
     obs = env.observation()
-    if obs[:, to_pos // 9, to_pos % 9].sum() > 0.5:
+    # Channels 26+ are metadata, not board occupancy.
+    if obs[:26, r, c].sum() > 0.5:
         return "吃子"
     return None
 
@@ -60,6 +63,31 @@ def _check_moves_into_danger(env: JieqiEnv, action: int) -> str | None:
     # Simple heuristic: if action moves piece to a position attacked by opponent
     # For v1, skip detailed check
     return None
+
+
+def _public_target_value(env: JieqiEnv, action: int) -> int:
+    """Estimate the captured piece value from public observation only."""
+    to_pos = action % 90
+    r, c = pos_to_rc(to_pos)
+    obs = env.observation()
+
+    for ch in range(14):
+        if obs[ch, r, c] > 0.5:
+            return PIECE_VALUE.get(ch % 7, 0)
+
+    for ch in range(14, 26):
+        if obs[ch, r, c] > 0.5:
+            return HIDDEN_ESTIMATE
+
+    return 0
+
+
+def _score_greedy_actions(env: JieqiEnv, actions: list[int]) -> list[dict]:
+    scored = []
+    for a in actions:
+        score = float(_public_target_value(env, a))
+        scored.append({"action": a, "scores": [score]})
+    return scored
 
 
 def generate_reasons(env: JieqiEnv, action: int, scores: list[float]) -> list[str]:
@@ -120,6 +148,8 @@ def generate_recommendations(
                 sim = _simulate_action(bd, a // 90, a % 90)
                 s.append(evaluate_determinized(sim, player, board))
             scored.append({"action": a, "scores": s})
+    elif agent_type == "greedy":
+        scored = _score_greedy_actions(env, actions)
     else:
         scored = [{"action": a, "scores": [0.0]} for a in actions]
 

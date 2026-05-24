@@ -5,53 +5,272 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>揭棋 Web UI</title>
 <style>
-body{font-family:"PingFang SC",sans-serif;background:#1a1a2e;color:#eee;margin:20px}
-.board{display:inline-grid;grid-template-columns:repeat(9,52px);gap:2px}
-.cell{width:52px;height:52px;background:#2a2a4a;border:1px solid #555;display:flex;
-  align-items:center;justify-content:center;cursor:pointer;font-size:16px;font-weight:bold;border-radius:4px}
-.cell.red_o{color:#f44;background:#3a1a1a}.cell.black_o{color:#88f;background:#1a1a3a}
-.cell.red_h{color:#f88;background:#2a1a1a}.cell.black_h{color:#aaf;background:#1a1a2a}
-.cell.empty{color:#555}.cell.selected{border:2px solid #ff0;box-shadow:0 0 8px #ff0}
-.cell.dest{background:#363!important}
-.controls{margin:10px 0}.controls button,.controls select{margin:4px;padding:6px 12px;font-size:14px;border-radius:4px;border:1px solid #555;background:#333;color:#eee;cursor:pointer}
-.controls button:hover{background:#444}
-.recs{margin-top:10px}.recs table{border-collapse:collapse}
-.recs td,.recs th{border:1px solid #555;padding:4px 10px;text-align:right}
-.recs th{background:#333}
-.play-bar{background:#222;padding:8px;margin:8px 0;border-radius:4px;text-align:center}
+:root{
+  --bg:#17201b;
+  --panel:#f7efd9;
+  --panel-2:#fff8e8;
+  --ink:#1f271f;
+  --muted:#657060;
+  --line:#d8c397;
+  --board:#d9a857;
+  --board-dark:#9a6332;
+  --red:#b3261e;
+  --black:#273043;
+  --green:#2f7d55;
+  --blue:#285a84;
+  --gold:#e1b143;
+  --shadow:0 18px 50px rgba(0,0,0,.24);
+}
+*{box-sizing:border-box}
+body{
+  margin:0;
+  min-height:100vh;
+  font-family:"PingFang SC","Hiragino Sans GB","Microsoft YaHei",Arial,sans-serif;
+  color:var(--ink);
+  background:
+    linear-gradient(90deg,rgba(255,255,255,.04) 1px,transparent 1px),
+    linear-gradient(180deg,rgba(255,255,255,.04) 1px,transparent 1px),
+    var(--bg);
+  background-size:44px 44px;
+}
+button,select{font:inherit}
+.app{max-width:1220px;margin:0 auto;padding:22px}
+.topbar{
+  display:flex;
+  justify-content:space-between;
+  gap:18px;
+  align-items:flex-end;
+  color:#f9f1df;
+  margin-bottom:16px;
+}
+h1{font-size:28px;line-height:1.1;margin:0 0 6px;letter-spacing:0}
+.subtitle{margin:0;color:#d7ccb4;font-size:14px}
+.status-pill{
+  min-width:190px;
+  padding:10px 14px;
+  border:1px solid rgba(255,255,255,.18);
+  background:rgba(255,255,255,.08);
+  border-radius:8px;
+  color:#fff6d9;
+  text-align:right;
+  font-size:14px;
+}
+.workspace{display:grid;grid-template-columns:minmax(500px,1fr) 360px;gap:18px;align-items:start}
+.board-panel,.side-panel{
+  background:var(--panel);
+  border:1px solid var(--line);
+  border-radius:8px;
+  box-shadow:var(--shadow);
+}
+.board-panel{padding:16px;overflow:auto}
+.side-panel{padding:14px;display:grid;gap:14px}
+.toolbar{
+  display:flex;
+  flex-wrap:wrap;
+  gap:10px;
+  align-items:center;
+  margin-bottom:14px;
+}
+.tool-group{
+  display:flex;
+  gap:8px;
+  align-items:center;
+  padding:8px;
+  border:1px solid #e5d2a9;
+  background:rgba(255,255,255,.38);
+  border-radius:8px;
+}
+.tool-label{font-size:12px;color:var(--muted);font-weight:700}
+button,select{
+  min-height:36px;
+  border-radius:6px;
+  border:1px solid #bfa875;
+  background:#fff8e8;
+  color:var(--ink);
+  padding:0 10px;
+  cursor:pointer;
+}
+button:hover,select:hover{border-color:#8f7441;background:#fffdf4}
+button.primary{background:var(--green);border-color:var(--green);color:white;font-weight:700}
+button.primary.stop{background:#9f2e27;border-color:#9f2e27}
+button.icon{min-width:38px;padding:0 9px}
+.board-wrap{display:flex;justify-content:center}
+.board{
+  display:grid;
+  grid-template-columns:repeat(9,54px);
+  grid-template-rows:repeat(10,54px);
+  gap:0;
+  padding:12px;
+  background:var(--board);
+  border:4px solid var(--board-dark);
+  border-radius:8px;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.35);
+}
+.cell{
+  width:54px;
+  height:54px;
+  background:#edc477;
+  border:1px solid rgba(96,57,24,.55);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  cursor:pointer;
+  font-size:22px;
+  font-weight:800;
+  line-height:1;
+  position:relative;
+  transition:transform .08s ease,box-shadow .08s ease,background .08s ease;
+}
+.cell:hover{box-shadow:inset 0 0 0 2px rgba(255,255,255,.5)}
+.cell.red_open,.cell.black_open,.cell.red_hidden,.cell.black_hidden{
+  border-radius:50%;
+  margin:4px;
+  width:46px;
+  height:46px;
+  border:2px solid #f7e4b1;
+  background:#f9ecd0;
+  box-shadow:0 3px 0 rgba(77,42,16,.38),0 7px 12px rgba(77,42,16,.2);
+}
+.cell.red_open{color:var(--red)}
+.cell.black_open{color:var(--black)}
+.cell.red_hidden{color:#f3d3c9;background:#8e3028}
+.cell.black_hidden{color:#d8e4ef;background:#2b3648}
+.cell.empty{color:rgba(92,59,26,.35);font-weight:500}
+.cell.selected{box-shadow:0 0 0 3px var(--gold),0 0 20px rgba(225,177,67,.65)}
+.cell.dest::after{
+  content:"";
+  width:14px;
+  height:14px;
+  border-radius:50%;
+  background:var(--green);
+  box-shadow:0 0 0 5px rgba(47,125,85,.18);
+  position:absolute;
+}
+.cell.red_open.dest::after,.cell.black_open.dest::after,.cell.red_hidden.dest::after,.cell.black_hidden.dest::after{
+  inset:auto 2px 2px auto;
+}
+.panel-section{
+  background:var(--panel-2);
+  border:1px solid #e5d2a9;
+  border-radius:8px;
+  padding:12px;
+}
+.section-title{margin:0 0 10px;font-size:15px}
+.metrics{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.metric{padding:10px;border:1px solid #eadab9;border-radius:6px;background:white}
+.metric b{display:block;font-size:20px;margin-bottom:2px}
+.metric span{font-size:12px;color:var(--muted)}
+#captured{min-height:28px;line-height:1.8;font-size:16px}
+.captured-piece{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:50%;margin:0 3px 4px 0;background:#f2dec0;border:1px solid #caa873;font-weight:800}
+.captured-piece.red{color:var(--red)}.captured-piece.black{color:var(--black)}
+.hint{font-size:13px;color:var(--muted);line-height:1.5;margin:0}
+.recs table{width:100%;border-collapse:separate;border-spacing:0;font-size:13px;overflow:hidden;border:1px solid #e5d2a9;border-radius:6px}
+.recs th,.recs td{padding:8px 7px;border-bottom:1px solid #eadab9;text-align:right;vertical-align:top}
+.recs th{background:#ead8b2;color:#433819;font-size:12px;white-space:nowrap}
+.recs tr:last-child td{border-bottom:0}
+.recs td:nth-child(2),.recs th:nth-child(2),.recs td:last-child,.recs th:last-child{text-align:left}
+.empty-state{padding:18px;border:1px dashed #cdb27a;border-radius:8px;color:var(--muted);text-align:center;background:#fffdf4}
+@media (max-width:980px){
+  .workspace{grid-template-columns:1fr}
+  .side-panel{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width:640px){
+  .app{padding:14px}
+  .topbar{display:block}
+  .status-pill{text-align:left;margin-top:12px}
+  .toolbar,.tool-group{align-items:stretch}
+  .tool-group{width:100%;flex-wrap:wrap}
+  .board{grid-template-columns:repeat(9,10vw);grid-template-rows:repeat(10,10vw);padding:8px}
+  .cell{width:10vw;height:10vw;font-size:18px}
+  .cell.red_open,.cell.black_open,.cell.red_hidden,.cell.black_hidden{width:calc(10vw - 8px);height:calc(10vw - 8px);margin:4px}
+  .side-panel{grid-template-columns:1fr}
+}
 </style>
 </head>
 <body>
-<h1>揭棋 Web UI</h1>
+<main class="app">
+  <header class="topbar">
+    <div>
+      <h1>揭棋规则验证台</h1>
+      <p class="subtitle">编辑局面、查看合法走法、用推荐结果辅助核对规则。</p>
+    </div>
+    <div class="status-pill" id="status">查看模式</div>
+  </header>
 
-<div class="controls">
-<button onclick="resetBoard()">🔄 重置</button>
-<select id="agent"><option>ismcts</option><option>greedy</option><option>belief_mcts</option></select>
-<button onclick="analyze()">🔍 分析</button>
-<select id="editMode"><option value="">查看</option><option value="red_open">红明子</option><option value="black_open">黑明子</option><option value="red_hidden">红暗子</option><option value="black_hidden">黑暗子</option></select>
-<select id="pieceType"><option value=0>帅/将</option><option value=1>仕/士</option><option value=2>相/象</option><option value=3>馬/马</option><option value=4>車/车</option><option value=5>炮</option><option value=6>兵/卒</option></select>
-<button onclick="importFEN()">📋 FEN</button>
-</div>
+  <section class="workspace">
+    <div class="board-panel">
+      <div class="toolbar">
+        <div class="tool-group">
+          <button class="icon" onclick="resetBoard()" title="重置棋盘">重置</button>
+          <button id="playBtn" class="primary" onclick="togglePlayMode()">人机对弈</button>
+          <button onclick="importFEN()">导入 FEN</button>
+        </div>
+        <div class="tool-group">
+          <span class="tool-label">分析</span>
+          <select id="agent" title="推荐算法">
+            <option>ismcts</option>
+            <option>greedy</option>
+            <option>belief_mcts</option>
+          </select>
+          <button onclick="analyze()">分析</button>
+        </div>
+        <div class="tool-group">
+          <span class="tool-label">编辑</span>
+          <select id="editMode" title="编辑模式">
+            <option value="">查看</option>
+            <option value="empty">清空</option>
+            <option value="red_open">红明子</option>
+            <option value="black_open">黑明子</option>
+            <option value="red_hidden">红暗子</option>
+            <option value="black_hidden">黑暗子</option>
+          </select>
+          <select id="pieceType" title="棋子类型">
+            <option value=0>帅/将</option>
+            <option value=1>仕/士</option>
+            <option value=2>相/象</option>
+            <option value=3>馬/马</option>
+            <option value=4>車/车</option>
+            <option value=5>炮</option>
+            <option value=6>兵/卒</option>
+          </select>
+        </div>
+      </div>
+      <div class="board-wrap">
+        <div class="board" id="board"></div>
+      </div>
+    </div>
 
-<div class="play-bar">
-<button id="playBtn" onclick="togglePlayMode()" style="font-size:16px;padding:8px 20px;background:#4a4;border:none;color:#fff;border-radius:4px;cursor:pointer">▶ 人机对弈</button>
-<span id="status" style="margin-left:16px;color:#ff0;font-size:14px"></span>
-</div>
+    <aside class="side-panel">
+      <section class="panel-section">
+        <h2 class="section-title">规则反馈</h2>
+        <div class="metrics">
+          <div class="metric"><b id="legalCount">-</b><span>当前合法走法</span></div>
+          <div class="metric"><b id="selectedInfo">-</b><span>选中位置</span></div>
+          <div class="metric"><b id="pieceCount">-</b><span>盘面棋子</span></div>
+          <div class="metric"><b id="capturedCount">0</b><span>已吃棋子</span></div>
+        </div>
+      </section>
 
-<div class="board" id="board"></div>
+      <section class="panel-section">
+        <h2 class="section-title">已吃棋子</h2>
+        <div id="captured">-</div>
+      </section>
 
-<div class="recs" style="margin-bottom:10px">
-<h3>已吃棋子</h3>
-<div id="captured" style="font-size:16px">-</div>
-</div>
+      <section class="panel-section recs">
+        <h2 class="section-title">AI 推荐</h2>
+        <div id="recs" class="empty-state">点击“分析”查看推荐走法</div>
+      </section>
 
-<div class="recs">
-<h3>AI 推荐</h3>
-<div id="recs">点击「分析」查看</div>
-</div>
+      <section class="panel-section">
+        <h2 class="section-title">操作提示</h2>
+        <p class="hint" id="hint">查看模式下点击棋子不会改盘。切到编辑模式可摆局面；切到人机对弈后，点击棋子会高亮所有合法落点。</p>
+      </section>
+    </aside>
+  </section>
+</main>
 
 <script>
-let playMode = false, selectedPos = null;
+let playMode = false, selectedPos = null, legalCache = [];
 
 const CN = {0:'帅',1:'仕',2:'相',3:'馬',4:'車',5:'炮',6:'兵'};
 const CNB = {0:'将',1:'士',2:'象',3:'马',4:'车',5:'炮',6:'卒'};
@@ -75,37 +294,68 @@ function togglePlayMode() {
   playMode = !playMode;
   const btn = document.getElementById('playBtn');
   if (playMode) {
-    btn.style.background = '#f44'; btn.textContent = '■ 停止对弈';
+    btn.classList.add('stop'); btn.textContent = '停止对弈';
     document.getElementById('editMode').value = '';
-    document.getElementById('status').textContent = '👤 你的回合 (请选子)';
+    setStatus('你的回合：请选择棋子');
   } else {
-    btn.style.background = '#4a4'; btn.textContent = '▶ 人机对弈';
-    document.getElementById('status').textContent = '';
+    btn.classList.remove('stop'); btn.textContent = '人机对弈';
+    setStatus('查看模式');
     selectedPos = null;
     clearHighlights();
   }
+  refreshLegalMoves();
 }
 
 function clearHighlights() {
-  document.querySelectorAll('.cell').forEach(c => {c.classList.remove('selected','dest');c.style.background='';});
+  document.querySelectorAll('.cell').forEach(c => c.classList.remove('selected','dest'));
+  document.getElementById('selectedInfo').textContent = '-';
+}
+
+function setStatus(text) {
+  document.getElementById('status').textContent = text;
+}
+
+function setHint(text) {
+  document.getElementById('hint').textContent = text;
+}
+
+async function refreshLegalMoves() {
+  try {
+    const resp = await fetch('/api/legal_moves');
+    const data = await resp.json();
+    legalCache = data.legal_moves || [];
+    document.getElementById('legalCount').textContent = legalCache.length;
+  } catch(e) {
+    document.getElementById('legalCount').textContent = '!';
+  }
+}
+
+function updateCounts() {
+  const pieces = [...document.querySelectorAll('.cell')].filter(c => !c.classList.contains('empty')).length;
+  document.getElementById('pieceCount').textContent = pieces;
 }
 
 async function cellClick(r, c, cell) {
   if (playMode) {
     const pos = r * 9 + c;
-    const resp = await fetch('/api/legal_moves');
-    const data = await resp.json();
-    const legal = data.legal_moves;
+    if (!legalCache.length) await refreshLegalMoves();
+    const legal = legalCache;
 
     if (selectedPos === null) {
       const hasPiece = legal.some(m => m.from[0]===r && m.from[1]===c);
-      if (!hasPiece) return;
+      if (!hasPiece) {
+        setHint(`(${r}, ${c}) 没有当前可走的合法走法。`);
+        return;
+      }
       selectedPos = pos;
+      document.getElementById('selectedInfo').textContent = `${r},${c}`;
       cell.classList.add('selected');
-      legal.filter(m => m.from[0]===r && m.from[1]===c).forEach(m => {
+      const moves = legal.filter(m => m.from[0]===r && m.from[1]===c);
+      moves.forEach(m => {
         const d = document.querySelector(`.cell[data-row="${m.to[0]}"][data-col="${m.to[1]}"]`);
         if (d) d.classList.add('dest');
       });
+      setHint(`已选 (${r}, ${c})，共有 ${moves.length} 个合法落点。`);
     } else {
       const move = legal.find(m => m.from[0]*9+m.from[1]===selectedPos && m.to[0]*9+m.to[1]===pos);
       if (move) {
@@ -113,7 +363,8 @@ async function cellClick(r, c, cell) {
         let r2 = await fetch('/api/apply_move', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({action:move.action})});
         let d2 = await r2.json();
         renderBoard(d2.cells, d2.captured);
-        document.getElementById('status').textContent = '🤖 AI 思考中...';
+        setStatus('AI 思考中...');
+        setHint(`已执行走法 action=${move.action}。`);
 
         // AI responds
         setTimeout(async () => {
@@ -124,10 +375,13 @@ async function cellClick(r, c, cell) {
             let r4 = await fetch('/api/board_state');
             let d4 = await r4.json();
             renderBoard(d4.cells, d4.captured);
-            document.getElementById('status').textContent = '👤 你的回合';
+            setStatus('你的回合');
+            refreshLegalMoves();
           }
           refreshRecs();
         }, 200);
+      } else {
+        setHint(`(${r}, ${c}) 不是当前选中棋子的合法落点。`);
       }
       selectedPos = null;
       clearHighlights();
@@ -137,13 +391,19 @@ async function cellClick(r, c, cell) {
 
   // Edit mode
   const mode = document.getElementById('editMode').value;
-  if (!mode) return;
+  if (!mode) {
+    setHint(`查看位置 (${r}, ${c})：${cell.textContent || '空'}。`);
+    return;
+  }
   const pt = parseInt(document.getElementById('pieceType').value);
   cell.className = 'cell ' + mode;
+  cell.dataset.ptype = pt;
   if (mode.includes('red')) cell.textContent = mode.includes('hidden') ? '暗' : CN[pt];
   else if (mode.includes('black')) cell.textContent = mode.includes('hidden') ? '暗' : CNB[pt];
   if (mode === 'empty') { cell.className = 'cell empty'; cell.textContent = '·'; }
   updateBoardState();
+  updateCounts();
+  setHint(`已编辑 (${r}, ${c})，后台局面已同步。`);
 }
 
 function updateBoardState() {
@@ -154,8 +414,11 @@ function updateBoardState() {
     const cls = c.className.replace('cell ','').replace(' selected','').replace(' dest','').trim();
     cells.push({row:r, col:col, state: cls==='empty'?'empty':cls, piece_type: parseInt(c.dataset.ptype||0)});
   });
-  // Send to backend
-  fetch('/api/load_fen', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({fen:'manual'})}).catch(()=>{});
+  fetch('/api/load_state', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({cells, current_player: 0})
+  }).then(() => refreshLegalMoves()).catch(()=>{});
 }
 
 function renderBoard(cells, captured) {
@@ -171,21 +434,28 @@ function renderBoard(cells, captured) {
     }
   });
   if (captured) {
-    document.getElementById('captured').textContent = captured.map(c => c.label).join(' ') || '-';
+    document.getElementById('captured').innerHTML = captured.map(c => `<span class="captured-piece ${c.color===0?'red':'black'}">${c.label}</span>`).join('') || '-';
+    document.getElementById('capturedCount').textContent = captured.length;
   }
+  updateCounts();
 }
 
 async function resetBoard() {
   const r = await fetch('/api/reset', {method:'POST'});
   const d = await r.json();
   renderBoard(d.cells, d.captured);
-  if (playMode) document.getElementById('status').textContent = '👤 你的回合';
+  clearHighlights();
+  await refreshLegalMoves();
+  setStatus(playMode ? '你的回合' : '查看模式');
+  setHint('棋盘已重置。');
 }
 
 async function analyze() {
+  setStatus('分析中...');
   const r = await fetch('/api/analyze', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({agent: document.getElementById('agent').value, top_k:5})});
   const d = await r.json();
   showRecs(d.recommendations);
+  setStatus(playMode ? '你的回合' : '查看模式');
 }
 
 async function refreshRecs() {
@@ -197,6 +467,10 @@ async function refreshRecs() {
 }
 
 function showRecs(recs) {
+  if (!recs || recs.length === 0) {
+    document.getElementById('recs').innerHTML = '<div class="empty-state">当前没有可推荐走法</div>';
+    return;
+  }
   let html = '<table><tr><th>#</th><th>走法</th><th>评分</th><th>均值</th><th>P10</th><th>不确定</th><th>原因</th></tr>';
   recs.forEach((r,i) => {
     html += `<tr><td>${i+1}</td><td>${r.move}</td><td>${r.score.toFixed(0)}</td><td>${r.mean_score.toFixed(0)}</td><td>${r.p10_score.toFixed(0)}</td><td>${r.uncertainty.toFixed(0)}</td><td>${(r.reasons||[]).join(', ')||'-'}</td></tr>`;
@@ -211,7 +485,9 @@ async function importFEN() {
   await fetch('/api/load_fen', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({fen})});
   const r = await fetch('/api/board_state');
   const d = await r.json();
-  renderBoard(d.cells);
+  renderBoard(d.cells, d.captured);
+  await refreshLegalMoves();
+  setHint('FEN 已导入。');
 }
 
 initBoard();

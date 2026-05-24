@@ -44,21 +44,21 @@ class BeliefState:
         player = env.current_player()
         revealed: list[dict] = []
         hidden: list[dict] = []
-        pool_own = dict(INITIAL_POOL)
-        pool_opp = dict(INITIAL_POOL)
+        pool_red = dict(INITIAL_POOL)
+        pool_black = dict(INITIAL_POOL)
 
         # Revealed channels 0-13
         for ch in range(14):
             pts = _hot_positions(obs, ch)
             ptype = ch % 7
-            color = 0 if ch < 7 else 1  # 0=own(Red when player==0), 1=opp
+            color = player if ch < 7 else 1 - player
             for r, c in pts:
                 pos = r * 9 + c
                 revealed.append({"pos": pos, "color": color, "ptype": ptype})
-                if ch < 7:
-                    pool_own[ptype] = max(0, pool_own.get(ptype, 0) - 1)
+                if color == 0:
+                    pool_red[ptype] = max(0, pool_red.get(ptype, 0) - 1)
                 else:
-                    pool_opp[ptype] = max(0, pool_opp.get(ptype, 0) - 1)
+                    pool_black[ptype] = max(0, pool_black.get(ptype, 0) - 1)
 
         # Hidden channels 14-25
         for ch in range(14, 26):
@@ -66,15 +66,15 @@ class BeliefState:
             for r, c in pts:
                 pos = r * 9 + c
                 if ch < 20:
-                    hidden.append({"pos": pos, "color": 0, "origin": (ch - 14) + 1})
+                    hidden.append({"pos": pos, "color": player, "origin": (ch - 14) + 1})
                 else:
-                    hidden.append({"pos": pos, "color": 1, "origin": (ch - 20) + 1})
+                    hidden.append({"pos": pos, "color": 1 - player, "origin": (ch - 20) + 1})
 
         return cls(
             revealed=revealed,
             hidden=hidden,
-            pool_own=pool_own,
-            pool_opp=pool_opp,
+            pool_own=pool_red,
+            pool_opp=pool_black,
             current_player=player,
         )
 
@@ -211,6 +211,7 @@ def evaluate_determinized(
 
 def _apply_to_board(state: dict[int, dict], board: Board) -> None:
     from jieqi.pieces import Piece
+    _clear_board(board)
     for pos, info in state.items():
         color = Color(info["color"])
         ptype = PieceType(info["ptype"])

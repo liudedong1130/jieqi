@@ -1,2 +1,4 @@
 total_steps,avg_return,avg_len,policy_loss,value_loss,entropy,approx_kl,clip_frac,explained_var,episode
 794,0.0,79.4,0.0,0.0,0.0,0.0,0.0,0.0,10
+1540,0.1,77.0,0.0,0.0,0.0,0.0,0.0,0.0,20
+2331,0.1,77.7,0.0,0.0,0.0,0.0,0.0,0.0,30

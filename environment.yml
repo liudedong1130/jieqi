@@ -1,0 +1,13 @@
+name: jieqi-rl
+channels:
+  - conda-forge
+  - pytorch
+dependencies:
+  - python=3.10
+  - fastapi
+  - httpx
+  - numpy
+  - pydantic
+  - pytest
+  - pytorch
+  - uvicorn

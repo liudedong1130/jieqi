@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+import random
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from jieqi import BOARD_SIZE, Color, Piece, PieceType
+from jieqi import BOARD_SIZE, Color, HIDDEN_TRUE_TYPE_POOL, Piece, PieceType
 from jieqi.board import Board
 from jieqi.env import JieqiEnv
 from jieqi.move import rc_to_pos
@@ -102,12 +103,14 @@ def validate_vision_state(state: VisionBoardState) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def vision_state_to_game_state(state: VisionBoardState, env: JieqiEnv) -> None:
+def vision_state_to_game_state(
+    state: VisionBoardState, env: JieqiEnv, seed: int | None = None
+) -> None:
     """Apply a vision state to *env* (overwrites board).
 
-    Hidden pieces are created with origin_type = true_type (the env does not
-    know the real identities from vision alone).  This is safe because the
-    env will only use effective_type for observations.
+    Hidden true identities are sampled from the remaining per-color piece
+    pools.  The sampled identities stay inside the environment and are not
+    exposed by observations or vision export.
     """
     errs = validate_vision_state(state)
     if errs:
@@ -118,6 +121,7 @@ def vision_state_to_game_state(state: VisionBoardState, env: JieqiEnv) -> None:
         board.set_cell(pos, None)
     board._captured = []
     board._turn = Color(state.current_player)
+    true_type_pools = _hidden_true_type_pools(state, random.Random(seed))
 
     for c in state.cells:
         st = c["state"]
@@ -130,9 +134,35 @@ def vision_state_to_game_state(state: VisionBoardState, env: JieqiEnv) -> None:
         elif st == "black_open":
             board.set_cell(pos, Piece(Color.BLACK, pt, pt, True))
         elif st == "red_hidden":
-            board.set_cell(pos, Piece(Color.RED, pt, pt, False))
+            true_type = true_type_pools[Color.RED].pop() if true_type_pools[Color.RED] else pt
+            board.set_cell(pos, Piece(Color.RED, pt, true_type, False))
         elif st == "black_hidden":
-            board.set_cell(pos, Piece(Color.BLACK, pt, pt, False))
+            true_type = true_type_pools[Color.BLACK].pop() if true_type_pools[Color.BLACK] else pt
+            board.set_cell(pos, Piece(Color.BLACK, pt, true_type, False))
+
+
+def _hidden_true_type_pools(
+    state: VisionBoardState, rng: random.Random
+) -> dict[Color, list[PieceType]]:
+    pools = {
+        Color.RED: list(HIDDEN_TRUE_TYPE_POOL),
+        Color.BLACK: list(HIDDEN_TRUE_TYPE_POOL),
+    }
+    for c in state.cells:
+        st = c.get("state", "")
+        if "open" not in st:
+            continue
+        pt = PieceType(c["piece_type"])
+        if pt == PieceType.KING:
+            continue
+        color = Color.RED if st == "red_open" else Color.BLACK
+        try:
+            pools[color].remove(pt)
+        except ValueError:
+            pass
+    rng.shuffle(pools[Color.RED])
+    rng.shuffle(pools[Color.BLACK])
+    return pools
 
 
 def game_state_to_vision_state(env: JieqiEnv) -> VisionBoardState:

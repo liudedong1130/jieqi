@@ -86,15 +86,32 @@ async def board_state(debug: bool = Query(False)) -> dict[str, Any]:
 @app.post("/api/load_fen")
 async def load_fen(req: dict) -> dict[str, Any]:
     from engine.jieqi_fen import parse_jieqi_fen
-    state = parse_jieqi_fen(req["fen"])
+    try:
+        state = parse_jieqi_fen(req["fen"])
+    except Exception as exc:
+        raise HTTPException(400, f"Invalid FEN: {exc}") from exc
     vs_cells = []
     for p in state["pieces"]:
         st = ("red_open" if p["revealed"] else "red_hidden") if p["color"] == 0 else ("black_open" if p["revealed"] else "black_hidden")
         vs_cells.append({"row": p["pos"] // 9, "col": p["pos"] % 9, "state": st, "piece_type": p["type"]})
     vs = VisionBoardState(cells=vs_cells, current_player=state["current_player"])
     _env.reset()
-    vision_state_to_game_state(vs, _env)
-    return {"status": "ok"}
+    try:
+        vision_state_to_game_state(vs, _env, seed=_random.randint(0, 999999))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return _board_dict()
+
+
+@app.post("/api/load_state")
+async def load_state(req: dict) -> dict[str, Any]:
+    vs = VisionBoardState.from_dict(req)
+    _env.reset()
+    try:
+        vision_state_to_game_state(vs, _env, seed=_random.randint(0, 999999))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return _board_dict()
 
 
 @app.post("/api/reset")

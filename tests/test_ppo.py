@@ -567,6 +567,7 @@ class TestOpponentPool:
             subprocess.run(
                 [sys.executable, str(pretrain_script),
                  "--games", "2", "--max-steps", "30",
+                 "--model", "simple_cnn", "--simulations", "5",
                  "--epochs", "1", "--batch-size", "16",
                  "--eval-games", "1",
                  "--checkpoint-out", pretrained_path, "--seed", "42"],
@@ -640,6 +641,43 @@ class TestISMCTS:
 
 
 class TestAlphaZeroTrain:
+    def test_az_dataset_save_load_policy_distribution(self) -> None:
+        from rl.az_data import AZDataset, AZSample
+
+        ds = AZDataset()
+        obs = np.zeros((28, 10, 9), dtype=np.float32)
+        mask = np.zeros(8100, dtype=np.int8)
+        policy = np.zeros(8100, dtype=np.float32)
+        mask[[1, 2, 3]] = 1
+        policy[[1, 2, 3]] = [0.2, 0.3, 0.5]
+        ds.add(AZSample(obs, mask, policy, 1.0, player=0, game_id="g", move_index=0))
+
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "data.npz")
+            ds.save(path)
+            loaded = AZDataset()
+            loaded.load(path)
+
+        assert len(loaded) == 1
+        assert np.allclose(loaded.samples[0].policy_target, policy)
+        assert np.array_equal(loaded.samples[0].legal_mask, mask)
+        assert loaded.samples[0].value_target == pytest.approx(1.0)
+
+    def test_masked_policy_loss_ignores_illegal_logits(self) -> None:
+        from rl.az_train import masked_policy_loss
+
+        logits = torch.zeros(1, 8100)
+        logits[0, 5000] = 1000.0  # illegal but very attractive
+        mask = torch.zeros(1, 8100, dtype=torch.int8)
+        mask[0, 10] = 1
+        mask[0, 20] = 1
+        target = torch.zeros(1, 8100)
+        target[0, 10] = 1.0
+
+        loss = masked_policy_loss(logits, target, mask)
+        assert torch.isfinite(loss)
+        assert loss.item() < 1.0
+
     def test_generate_selfplay_no_error(self) -> None:
         from rl.ismcts import ISMCTSAgent
         from rl.az_selfplay import generate_az_selfplay_data
@@ -647,6 +685,11 @@ class TestAlphaZeroTrain:
         agent = ISMCTSAgent(num_simulations=10, max_depth=3, temperature=1.0, seed=42)
         ds = generate_az_selfplay_data(agent, num_games=2, max_steps=40, seed=123)
         assert len(ds) > 0
+        for sample in ds.samples:
+            assert sample.policy_target.shape == (8100,)
+            assert sample.legal_mask.shape == (8100,)
+            assert abs(float(sample.policy_target.sum()) - 1.0) < 1e-4
+            assert float(sample.policy_target[sample.legal_mask == 0].sum()) == pytest.approx(0.0)
 
     def test_ismcts_get_policy(self) -> None:
         from rl.ismcts import ISMCTSAgent
@@ -659,6 +702,7 @@ class TestAlphaZeroTrain:
         assert policy.shape == (8100,)
         assert abs(policy.sum() - 1.0) < 1e-4
         assert action in env.legal_actions()
+        assert float(policy[env.legal_action_mask() == 0].sum()) == pytest.approx(0.0)
 
     def test_train_alphazero_script(self) -> None:
         import subprocess, sys
@@ -671,12 +715,14 @@ class TestAlphaZeroTrain:
                  "--iterations", "2", "--selfplay-games", "2",
                  "--simulations", "10", "--max-steps", "40",
                  "--epochs", "2", "--batch-size", "16",
+                 "--model", "simple_cnn",
                  "--eval-interval", "2", "--eval-games", "1",
                  "--checkpoint-dir", d, "--seed", "42"],
                 capture_output=True, text=True, timeout=300,
             )
             assert result.returncode == 0
             assert os.path.exists(os.path.join(d, "latest.pt"))
+            assert os.path.exists(os.path.join(d, "metrics.csv"))
 
     def test_az_checkpoint_loadable(self) -> None:
         import subprocess, sys
@@ -689,6 +735,7 @@ class TestAlphaZeroTrain:
                  "--iterations", "1", "--selfplay-games", "1",
                  "--simulations", "10", "--max-steps", "30",
                  "--epochs", "1", "--batch-size", "16",
+                 "--model", "simple_cnn",
                  "--eval-interval", "1", "--eval-games", "1",
                  "--checkpoint-dir", d, "--seed", "42"],
                 capture_output=True, text=True, timeout=300,

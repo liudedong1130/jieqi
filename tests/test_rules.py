@@ -735,15 +735,15 @@ class TestElephantAllEyes:
         assert rc_to_pos(9, 4) not in targets  # eye (8,3) blocked
         assert rc_to_pos(9, 0) in targets  # eye (8,1) clear
 
-    def test_hidden_elephant_can_cross_river(self) -> None:
+    def test_hidden_elephant_cannot_cross_river(self) -> None:
         board = _make_empty_board()
         _place(board, 9, 4, _piece(Color.RED, PieceType.KING))
         _place(board, 0, 3, _piece(Color.BLACK, PieceType.KING))
         _place(board, 5, 2, Piece(Color.RED, PieceType.ELEPHANT, PieceType.HORSE, False))
         moves = generate_piece_moves(board, 5, 2)
         targets = {m.to_pos for m in moves}
-        assert rc_to_pos(3, 0) in targets
-        assert rc_to_pos(3, 4) in targets
+        assert rc_to_pos(3, 0) not in targets
+        assert rc_to_pos(3, 4) not in targets
         assert rc_to_pos(7, 0) in targets
         assert rc_to_pos(7, 4) in targets
 
@@ -769,6 +769,16 @@ class TestAdvisorHidden:
         targets = {m.to_pos for m in moves}
         expected = {rc_to_pos(7, 3), rc_to_pos(7, 5), rc_to_pos(9, 3), rc_to_pos(9, 5)}
         assert targets == expected
+
+    def test_hidden_advisor_cannot_leave_palace(self) -> None:
+        board = _make_empty_board()
+        _place(board, 9, 4, _piece(Color.RED, PieceType.KING))
+        _place(board, 0, 3, _piece(Color.BLACK, PieceType.KING))
+        _place(board, 9, 3, Piece(Color.RED, PieceType.ADVISOR, PieceType.ROOK, False))
+        moves = generate_piece_moves(board, 9, 3)
+        targets = {m.to_pos for m in moves}
+        assert rc_to_pos(8, 2) not in targets
+        assert rc_to_pos(8, 4) in targets
 
 
 class TestKingsFacingExtended:

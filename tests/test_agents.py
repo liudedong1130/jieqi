@@ -13,6 +13,7 @@ from jieqi.move import rc_to_pos
 from agents.random_agent import RandomAgent
 from agents.greedy_agent import GreedyAgent
 from agents.rollout_agent import RolloutAgent
+from agents.belief_mcts_agent import BeliefState
 
 
 # ---------------------------------------------------------------------------
@@ -140,6 +141,44 @@ class TestRolloutAgent:
         assert result["errors"] == 0
         total = result["agent_a"]["wins"] + result["agent_b"]["wins"] + result["draws"]
         assert total == 10
+
+
+class TestBeliefState:
+    def test_black_to_move_preserves_actual_colors(self) -> None:
+        env = JieqiEnv()
+        env.reset(seed=42)
+        env.step(env.legal_actions()[0])
+
+        belief = BeliefState.from_env(env)
+        kings = {(item["pos"], item["color"]) for item in belief.revealed if item["ptype"] == PieceType.KING}
+
+        assert (rc_to_pos(9, 4), int(Color.RED)) in kings
+        assert (rc_to_pos(0, 4), int(Color.BLACK)) in kings
+        assert all(
+            item["color"] == int(env.board[item["pos"]].color)
+            for item in belief.hidden
+            if env.board[item["pos"]] is not None
+        )
+
+
+class TestISMCTSPolicyValueEvaluator:
+    def test_policy_value_evaluator_uses_public_encoder(self) -> None:
+        import torch
+
+        from rl.ismcts import _get_policy_value_evaluator
+
+        class DummyModel:
+            def __call__(self, obs):
+                return torch.zeros((obs.shape[0], 8100)), torch.tensor([[0.25]])
+
+        board = Board()
+        evaluator = _get_policy_value_evaluator(DummyModel(), "cpu")
+        score = evaluator({
+            rc_to_pos(9, 4): {"color": int(Color.RED), "ptype": int(PieceType.KING), "revealed": True},
+            rc_to_pos(0, 4): {"color": int(Color.BLACK), "ptype": int(PieceType.KING), "revealed": True},
+        }, int(Color.BLACK), board)
+
+        assert score == pytest.approx(0.25)
 
 
 # ---------------------------------------------------------------------------

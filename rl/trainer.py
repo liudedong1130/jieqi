@@ -383,10 +383,11 @@ class PPOTrainer:
         if cfg:
             ckpt_type = cfg.get("type", "?")
             if ckpt_type != self._model_type:
-                raise ValueError(
-                    f"Model type mismatch: checkpoint is '{ckpt_type}', "
-                    f"trainer is '{self._model_type}'. Use matching --model."
-                )
+                self._model_type = ckpt_type
+                self._model_kwargs = {k: v for k, v in cfg.items() if k != "type"}
+                self.model = _model_from_config(cfg).to(self.device)
+                lr = self.optimizer.param_groups[0].get("lr", 3e-4)
+                self.optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
         self.model.load_state_dict(ckpt["model"])
         return cfg
 

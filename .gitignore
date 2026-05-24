@@ -5,5 +5,8 @@ __pycache__/
 .DS_Store
 results.json
 runs/
-az_pretrained.pt
-results.json
+*.pt
+*.pth
+*.ckpt
+checkpoints/
+wandb/

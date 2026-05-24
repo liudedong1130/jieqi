@@ -12,13 +12,13 @@ from agents.belief_mcts_agent import (
     PIECE_VALUES,
     _apply_to_board,
     _clear_board,
-    _hot_positions,
-    evaluate_determinized,
     sample_determinization,
 )
 from jieqi.board import Board
+from jieqi.constants import Color
+from jieqi.encoder import encode_observation
 from jieqi.env import JieqiEnv
-from jieqi.move import pos_to_rc, rc_to_pos
+from jieqi.move import pos_to_rc
 from jieqi.rules import generate_piece_moves
 
 
@@ -59,7 +59,8 @@ def _get_policy_value_evaluator(model: Any, device: str):
 
     def evaluate(board_state: dict[int, dict], player: int, board_obj: Board) -> float:
         _apply_to_board(board_state, board_obj)
-        obs = JieqiEnv._encode_observation(board_obj)
+        board_obj._turn = Color(player)
+        obs = encode_observation(board_obj)
         _clear_board(board_obj)
         t = torch.from_numpy(obs).unsqueeze(0).to(device)
         with torch.no_grad():
@@ -167,7 +168,12 @@ class ISMCTSAgent:
 
         counts = counts ** (1.0 / max(self.temperature, 0.1))
         total = counts.sum()
-        probs = counts / total if total > 0 else np.ones(8100) / 8100
+        if total > 0:
+            probs = counts / total
+        else:
+            probs = np.zeros(8100, dtype=np.float64)
+            for a in actions:
+                probs[a] = 1.0 / len(actions)
 
         r = self._rng.random()
         cum = 0.0
@@ -260,14 +266,8 @@ class ISMCTSAgent:
         # Apply action on determinized board
         next_board = _simulate_action(det_board, best_action)
 
-        # Get legal actions for next player in the determinized board
-        _apply_to_board(next_board, self._board)
-        self._board._turn = self._board._turn.opposite() if hasattr(self._board, '_turn') else None
-        # Actually, generate moves for the next player
-        # For simplicity in ISMCTS, estimate next legal actions
         next_player = 1 - player
         next_legal = self._approx_legal_actions(next_board, next_player)
-        _clear_board(self._board)
 
         # Recursively simulate
         child_node = node.children[best_action]
@@ -295,22 +295,34 @@ class ISMCTSAgent:
         logits[mask == 0] = -1e9
         logits = logits - logits.max()
         probs = np.exp(logits)
-        probs /= probs.sum()
+        total = probs.sum()
+        if total <= 0 or not np.isfinite(total):
+            probs = mask.astype(np.float64)
+            probs /= max(probs.sum(), 1.0)
+            return probs.astype(np.float32)
+        probs /= total
         return probs
 
     def _approx_legal_actions(self, board_state: dict[int, dict], player: int) -> list[int]:
-        """Estimate legal actions on the determinized board."""
-        actions = []
-        for pos, info in board_state.items():
-            if info["color"] != player:
-                continue
-            r, c = pos_to_rc(pos)
-            moves = generate_piece_moves(self._board, r, c)
-            for mv in moves:
-                a = mv.from_pos * 90 + mv.to_pos
-                if a < 8100:
-                    actions.append(a)
-        return actions if actions else [0]  # fallback
+        """Generate pseudo-legal actions on the determinized board.
+
+        This intentionally avoids the expensive full self-check filter inside
+        every simulation, but unlike the old version it applies the sampled
+        board before move generation and never returns a fake fallback action.
+        """
+        _apply_to_board(board_state, self._board)
+        self._board._turn = Color(player)
+        try:
+            actions: list[int] = []
+            for pos, info in board_state.items():
+                if info["color"] != player:
+                    continue
+                r, c = pos_to_rc(pos)
+                for mv in generate_piece_moves(self._board, r, c):
+                    actions.append(mv.from_pos * 90 + mv.to_pos)
+            return actions
+        finally:
+            _clear_board(self._board)
 
 
 def _simulate_action(board: dict[int, dict], action: int) -> dict[int, dict]:

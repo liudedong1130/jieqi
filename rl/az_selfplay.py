@@ -15,6 +15,8 @@ def generate_az_selfplay_data(
     max_steps: int,
     seed: int,
     replay_buffer: AZDataset | None = None,
+    max_buffer_samples: int | None = None,
+    progress_interval: int = 0,
 ) -> AZDataset:
     """Generate AlphaZero-style self-play training data using ISMCTS.
 
@@ -33,8 +35,11 @@ def generate_az_selfplay_data(
     seed : int
         Base random seed.
     replay_buffer : AZDataset | None
-        If provided, new samples are appended.  Old samples beyond
-        a window are trimmed (sliding window).
+        If provided, new samples are appended.
+    max_buffer_samples : int | None
+        If provided, keep only the most recent samples after appending.
+    progress_interval : int
+        If > 0, print progress every N moves.
 
     Returns
     -------
@@ -51,11 +56,17 @@ def generate_az_selfplay_data(
 
         moves: list[dict] = []
         done = False
+        if progress_interval > 0:
+            print(f"    selfplay game {g + 1}/{num_games} ...", flush=True)
         while not done:
             player = env.current_player()
             obs = env.observation().copy()
             mask = env.legal_action_mask().copy()
             policy, action = agent.get_policy(env)
+            if action not in env.legal_actions():
+                action = env.legal_actions()[0]
+                policy = np.zeros(8100, dtype=np.float32)
+                policy[action] = 1.0
             _obs, reward, terminated, truncated, _info = env.step(action)
             moves.append({
                 "obs": obs, "mask": mask, "policy": policy,
@@ -63,6 +74,12 @@ def generate_az_selfplay_data(
                 "reward": reward, "terminated": terminated,
             })
             done = terminated or truncated
+            if progress_interval > 0 and len(moves) % progress_interval == 0:
+                print(
+                    f"      selfplay game {g + 1}/{num_games} | step {len(moves)} | "
+                    f"buffer {len(dataset)}",
+                    flush=True,
+                )
 
         # Determine winner
         winner = None
@@ -78,5 +95,13 @@ def generate_az_selfplay_data(
                 policy_target=m["policy"], value_target=value,
                 player=m["player"], game_id=f"az_{seed}_{g}", move_index=i,
             ))
+        if progress_interval > 0:
+            print(
+                f"    selfplay game {g + 1}/{num_games} done | steps {len(moves)} | "
+                f"buffer {len(dataset)}",
+                flush=True,
+            )
 
+    if max_buffer_samples is not None:
+        dataset.trim_to_recent(max_buffer_samples)
     return dataset

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Supervised pretraining pipeline using BeliefMCTS-generated data."""
+"""Supervised pretraining pipeline using search-generated policy targets."""
 
 from __future__ import annotations
 
@@ -12,13 +12,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
 import torch
-import torch.nn as nn
-from torch.utils.data import DataLoader, TensorDataset
 
 from agents.belief_mcts_agent import BeliefMCTSAgent
 from evaluation.arena import AgentConfig, Arena
 from jieqi.env import JieqiEnv
 from rl.az_data import AZSample, AZDataset
+from rl.az_train import train_policy_value
+from rl.ismcts import ISMCTSAgent
 from rl.model import create_model
 
 
@@ -28,29 +28,64 @@ from rl.model import create_model
 
 
 def generate_data(
-    games: int, max_steps: int, seed: int, num_samples: int = 30
+    games: int,
+    max_steps: int,
+    seed: int,
+    *,
+    teacher: str = "ismcts",
+    simulations: int = 100,
+    max_depth: int = 5,
+    num_samples: int = 30,
+    progress_interval: int = 1,
 ) -> AZDataset:
-    """Generate supervised data using BeliefMCTS self-play."""
+    """Generate supervised data using search self-play."""
     dataset = AZDataset()
 
     for g in range(games):
         env = JieqiEnv(max_steps=max_steps)
         env.reset(seed=seed + g)
-        agent = BeliefMCTSAgent(num_samples=num_samples, seed=seed + g)
+        if teacher == "ismcts":
+            agent = ISMCTSAgent(
+                num_simulations=simulations,
+                max_depth=max_depth,
+                temperature=1.0,
+                evaluator="material",
+                seed=seed + g,
+            )
+        elif teacher == "belief_mcts":
+            agent = BeliefMCTSAgent(num_samples=num_samples, seed=seed + g)
+        else:
+            raise ValueError(f"Unknown teacher '{teacher}'")
 
         moves_info: list[dict] = []
         done = False
+        print(f"  game {g + 1}/{games} ...", flush=True)
         while not done:
             player = env.current_player()
             obs = env.observation().copy()
             mask = env.legal_action_mask().copy()
-            action = agent.select_action(env)
+            if teacher == "ismcts":
+                policy, action = agent.get_policy(env)
+            else:
+                action = agent.select_action(env)
+                policy = np.zeros(8100, dtype=np.float32)
+                policy[action] = 1.0
+            if action not in env.legal_actions():
+                action = env.legal_actions()[0]
+                policy = np.zeros(8100, dtype=np.float32)
+                policy[action] = 1.0
             _obs, reward, terminated, truncated, _info = env.step(action)
             moves_info.append({
-                "action": action, "player": player, "obs": obs, "mask": mask,
+                "action": action, "policy": policy, "player": player, "obs": obs, "mask": mask,
                 "reward": reward, "terminated": terminated,
             })
             done = terminated or truncated
+            if progress_interval > 0 and len(moves_info) % progress_interval == 0:
+                print(
+                    f"    game {g + 1}/{games} | step {len(moves_info)} | "
+                    f"samples {len(dataset)}",
+                    flush=True,
+                )
 
         winner = None
         for mi in reversed(moves_info):
@@ -59,15 +94,18 @@ def generate_data(
                 break
 
         for i, mi in enumerate(moves_info):
-            policy = np.zeros(8100, dtype=np.float32)
-            policy[mi["action"]] = 1.0
             value = 1.0 if (winner is not None and mi["player"] == winner) else (-1.0 if (winner is not None) else 0.0)
 
             dataset.add(AZSample(
                 observation=mi["obs"], legal_mask=mi["mask"],
-                policy_target=policy, value_target=value,
+                policy_target=mi["policy"], value_target=value,
                 player=mi["player"], game_id=f"bmcts_{g}", move_index=i,
             ))
+        print(
+            f"  game {g + 1}/{games} done | steps {len(moves_info)} | "
+            f"dataset {len(dataset)}",
+            flush=True,
+        )
 
     return dataset
 
@@ -81,32 +119,10 @@ def train_supervised(
     dataset: AZDataset,
     model_type: str, model_kwargs: dict,
     epochs: int, lr: float, batch_size: int, device: str,
-) -> nn.Module:
+) -> torch.nn.Module:
     model = create_model(model_type, **model_kwargs).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    obs_t, mask_t, policy_t, value_t = dataset.to_tensors(device)
-
-    ds = TensorDataset(obs_t, policy_t, value_t)
-    loader = DataLoader(ds, batch_size=batch_size, shuffle=True)
-
-    for epoch in range(1, epochs + 1):
-        total_p_loss, total_v_loss, n_batches = 0.0, 0.0, 0
-        for bo, bp, bv in loader:
-            logits, values = model(bo)
-            p_loss = nn.functional.cross_entropy(logits, bp)
-            v_loss = nn.functional.mse_loss(values.squeeze(-1), bv)
-            loss = p_loss + 0.5 * v_loss
-            optimizer.zero_grad()
-            loss.backward()
-            nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            optimizer.step()
-            total_p_loss += p_loss.item()
-            total_v_loss += v_loss.item()
-            n_batches += 1
-
-        if epoch % 5 == 0 or epoch == 1 or epoch == epochs:
-            print(f"  epoch {epoch:3d} | p_loss {total_p_loss/max(n_batches,1):.4f} | v_loss {total_v_loss/max(n_batches,1):.4f}")
-
+    train_policy_value(dataset, model, optimizer, device, epochs=epochs, batch_size=batch_size)
     return model
 
 
@@ -116,6 +132,9 @@ def train_supervised(
 
 
 def quick_eval(checkpoint_path: str, opponent: str, n_games: int, max_steps: int) -> dict:
+    n_games = max(2, n_games)
+    if n_games % 2 == 1:
+        n_games += 1
     policy_cfg = AgentConfig("policy", "policy", checkpoint=checkpoint_path, deterministic=True)
     opp_cfg = AgentConfig(opponent, opponent)
     arena = Arena([policy_cfg, opp_cfg])
@@ -129,14 +148,19 @@ def quick_eval(checkpoint_path: str, opponent: str, n_games: int, max_steps: int
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description="BeliefMCTS supervised pretraining")
+    p = argparse.ArgumentParser(description="Search supervised pretraining")
     p.add_argument("--games", type=int, default=100, help="Games to generate")
     p.add_argument("--max-steps", type=int, default=300)
     p.add_argument("--data", type=str, default=None, help="Use cached .npz dataset")
     p.add_argument("--cache-data", type=str, default=None, help="Save generated data")
-    p.add_argument("--model", type=str, default="simple_cnn")
+    p.add_argument("--teacher", type=str, default="ismcts", choices=["ismcts", "belief_mcts"])
+    p.add_argument("--simulations", type=int, default=100, help="ISMCTS simulations per move")
+    p.add_argument("--max-depth", type=int, default=5, help="ISMCTS max search depth")
+    p.add_argument("--teacher-samples", type=int, default=30, help="BeliefMCTS samples per move")
+    p.add_argument("--progress-interval", type=int, default=10, help="Print progress every N moves during data generation")
+    p.add_argument("--model", type=str, default="resnet")
     p.add_argument("--channels", type=int, default=64)
-    p.add_argument("--blocks", type=int, default=2)
+    p.add_argument("--blocks", type=int, default=3)
     p.add_argument("--epochs", type=int, default=20)
     p.add_argument("--lr", type=float, default=1e-3)
     p.add_argument("--batch-size", type=int, default=128)
@@ -147,11 +171,7 @@ def main() -> None:
     args = p.parse_args()
 
     torch.manual_seed(args.seed)
-    device = torch.device(
-        args.device or
-        "cuda" if torch.cuda.is_available() else
-        "mps" if torch.backends.mps.is_available() else "cpu"
-    )
+    device = torch.device(args.device or ("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"))
 
     # Step 1: Data
     if args.data:
@@ -159,8 +179,17 @@ def main() -> None:
         dataset = AZDataset()
         dataset.load(args.data)
     else:
-        print(f"Generating {args.games} games with BeliefMCTS ...")
-        dataset = generate_data(args.games, args.max_steps, args.seed)
+        print(f"Generating {args.games} games with {args.teacher} ...")
+        dataset = generate_data(
+            args.games,
+            args.max_steps,
+            args.seed,
+            teacher=args.teacher,
+            simulations=args.simulations,
+            max_depth=args.max_depth,
+            num_samples=args.teacher_samples,
+            progress_interval=args.progress_interval,
+        )
         if args.cache_data:
             dataset.save(args.cache_data)
             print(f"  Cached to {args.cache_data}")

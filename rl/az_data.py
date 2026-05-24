@@ -55,6 +55,13 @@ class AZDataset:
     def __len__(self) -> int:
         return len(self.samples)
 
+    def extend(self, other: AZDataset) -> None:
+        self.samples.extend(other.samples)
+
+    def trim_to_recent(self, max_samples: int) -> None:
+        if max_samples > 0 and len(self.samples) > max_samples:
+            self.samples = self.samples[-max_samples:]
+
     def save(self, path: str) -> None:
         """Save dataset as a compressed .npz file."""
         n = len(self.samples)

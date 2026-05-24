@@ -8,6 +8,7 @@ import tempfile
 from pathlib import Path
 
 from jieqi.env import JieqiEnv
+from jieqi.constants import Color, HIDDEN_TRUE_TYPE_POOL, PieceType
 from vision.adapter import (
     VisionBoardState,
     game_state_to_vision_state,
@@ -84,6 +85,25 @@ class TestVisionAdapter:
                 assert piece is not None
                 if not piece.revealed:
                     assert c["piece_type"] == int(piece.origin_type)
+
+    def test_import_samples_hidden_true_types_from_pool(self) -> None:
+        env = JieqiEnv()
+        state = VisionBoardState(cells=[
+            {"row": 9, "col": 4, "state": "red_open", "piece_type": int(PieceType.KING)},
+            {"row": 0, "col": 4, "state": "black_open", "piece_type": int(PieceType.KING)},
+            {"row": 6, "col": 0, "state": "red_hidden", "piece_type": int(PieceType.PAWN)},
+            {"row": 6, "col": 2, "state": "red_hidden", "piece_type": int(PieceType.PAWN)},
+        ])
+
+        vision_state_to_game_state(state, env, seed=0)
+        red_hidden_true_types = [
+            p.true_type
+            for p in env.board.cells
+            if p is not None and p.color == Color.RED and not p.revealed
+        ]
+
+        assert sorted(red_hidden_true_types) != [PieceType.PAWN, PieceType.PAWN]
+        assert all(t in HIDDEN_TRUE_TYPE_POOL for t in red_hidden_true_types)
 
 
 class TestAnalyzeScript:
