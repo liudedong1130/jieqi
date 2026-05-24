@@ -1,0 +1,7 @@
+algo: ppo
+episodes: 16
+gamma: 0.99
+init_checkpoint: /var/folders/nq/qv3ww5vx4f5g3mzksx8rp2kh0000gn/T/tmphyaa056k/pretrained.pt
+lr: 0.0003
+model: simple_cnn
+seed: 42

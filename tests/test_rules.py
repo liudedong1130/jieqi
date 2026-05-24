@@ -130,19 +130,15 @@ class TestElephant:
         assert rc_to_pos(9, 0) in targets  # eye (8,1) clear
         assert rc_to_pos(9, 4) in targets  # eye (8,3) clear
 
-    def test_elephant_cannot_cross_river(self) -> None:
-        """象不能过河"""
+    def test_elephant_can_cross_river(self) -> None:
+        """§Jieqi: 象可以过河"""
         board = _make_empty_board()
-        # Red elephant at row 5 (right at river edge)
         _place(board, 5, 2, _piece(Color.RED, PieceType.ELEPHANT))
-
         moves = generate_piece_moves(board, 5, 2)
         targets = {m.to_pos for m in moves}
-        # Target (3,0) would be across the river → not allowed
-        assert rc_to_pos(3, 0) not in targets
-        # Target (3,4) → row 3 is across the river → not allowed
-        assert rc_to_pos(3, 4) not in targets
-        # Target (7,0) and (7,4) → rows 7 are on own side → allowed
+        # In Jieqi, elephants CAN cross the river (all 4 targets)
+        assert rc_to_pos(3, 0) in targets
+        assert rc_to_pos(3, 4) in targets
         assert rc_to_pos(7, 0) in targets
         assert rc_to_pos(7, 4) in targets
 
@@ -177,21 +173,14 @@ class TestAdvisor:
         expected = {rc_to_pos(7, 3), rc_to_pos(7, 5), rc_to_pos(9, 3), rc_to_pos(9, 5)}
         assert targets == expected
 
-    def test_advisor_cannot_leave_palace(self) -> None:
-        """士不能离开九宫"""
+    def test_advisor_can_leave_palace(self) -> None:
+        """§Jieqi: 士可以离开九宫"""
         board = _make_empty_board()
-        # Advisor at palace edge (9, 3)
         _place(board, 9, 3, _piece(Color.RED, PieceType.ADVISOR))
-
         moves = generate_piece_moves(board, 9, 3)
         targets = {m.to_pos for m in moves}
-        # Only diagonal to (8, 4) — (10, 2) and (10, 4) are off-board
-        # (8, 2) is outside palace (col 2 < 3) — wait, (8,2) is diagonal from (9,3)?
-        # (9,3) → (8,2) = (-1, -1) ✓ but col 2 is outside palace.
-        # (9,3) → (8,4) = (-1, +1) ✓ col 4 is in palace.
-        # (9,3) → (10,2) = (+1, -1) off-board.
-        # (9,3) → (10,4) = (+1, +1) off-board.
-        assert rc_to_pos(8, 2) not in targets  # outside palace col
+        # In Jieqi, advisor CAN leave the palace
+        assert rc_to_pos(8, 2) in targets  # outside palace, now legal
         assert rc_to_pos(8, 4) in targets
 
     def test_black_advisor_in_black_palace(self) -> None:
@@ -746,17 +735,17 @@ class TestElephantAllEyes:
         assert rc_to_pos(9, 4) not in targets  # eye (8,3) blocked
         assert rc_to_pos(9, 0) in targets  # eye (8,1) clear
 
-    def test_hidden_elephant_cannot_cross_river(self) -> None:
+    def test_hidden_elephant_can_cross_river(self) -> None:
         board = _make_empty_board()
         _place(board, 9, 4, _piece(Color.RED, PieceType.KING))
         _place(board, 0, 3, _piece(Color.BLACK, PieceType.KING))
         _place(board, 5, 2, Piece(Color.RED, PieceType.ELEPHANT, PieceType.HORSE, False))
         moves = generate_piece_moves(board, 5, 2)
         targets = {m.to_pos for m in moves}
+        assert rc_to_pos(3, 0) in targets
+        assert rc_to_pos(3, 4) in targets
         assert rc_to_pos(7, 0) in targets
         assert rc_to_pos(7, 4) in targets
-        assert rc_to_pos(3, 0) not in targets
-        assert rc_to_pos(3, 4) not in targets
 
     def test_hidden_elephant_eye_blocked(self) -> None:
         board = _make_empty_board()

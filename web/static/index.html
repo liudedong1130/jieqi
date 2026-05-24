@@ -40,6 +40,11 @@ body{font-family:"PingFang SC",sans-serif;background:#1a1a2e;color:#eee;margin:2
 
 <div class="board" id="board"></div>
 
+<div class="recs" style="margin-bottom:10px">
+<h3>已吃棋子</h3>
+<div id="captured" style="font-size:16px">-</div>
+</div>
+
 <div class="recs">
 <h3>AI 推荐</h3>
 <div id="recs">点击「分析」查看</div>
@@ -107,7 +112,7 @@ async function cellClick(r, c, cell) {
         // Human move
         let r2 = await fetch('/api/apply_move', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({action:move.action})});
         let d2 = await r2.json();
-        renderBoard(d2.cells);
+        renderBoard(d2.cells, d2.captured);
         document.getElementById('status').textContent = '🤖 AI 思考中...';
 
         // AI responds
@@ -118,7 +123,7 @@ async function cellClick(r, c, cell) {
             await fetch('/api/apply_move', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({action: d3.recommendations[0].action})});
             let r4 = await fetch('/api/board_state');
             let d4 = await r4.json();
-            renderBoard(d4.cells);
+            renderBoard(d4.cells, d4.captured);
             document.getElementById('status').textContent = '👤 你的回合';
           }
           refreshRecs();
@@ -153,7 +158,7 @@ function updateBoardState() {
   fetch('/api/load_fen', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({fen:'manual'})}).catch(()=>{});
 }
 
-function renderBoard(cells) {
+function renderBoard(cells, captured) {
   document.querySelectorAll('.cell').forEach(c => {
     const r = parseInt(c.dataset.row), col = parseInt(c.dataset.col);
     const info = cells.find(x => x.row===r && x.col===col);
@@ -165,12 +170,15 @@ function renderBoard(cells) {
       c.className = 'cell empty'; c.textContent = '·'; c.dataset.ptype = '';
     }
   });
+  if (captured) {
+    document.getElementById('captured').textContent = captured.map(c => c.label).join(' ') || '-';
+  }
 }
 
 async function resetBoard() {
   const r = await fetch('/api/reset', {method:'POST'});
   const d = await r.json();
-  renderBoard(d.cells);
+  renderBoard(d.cells, d.captured);
   if (playMode) document.getElementById('status').textContent = '👤 你的回合';
 }
 

@@ -1,0 +1,7 @@
+algo: ppo
+episodes: 8
+gamma: 0.99
+init_checkpoint: none
+lr: 0.0003
+model: resnet
+seed: 42

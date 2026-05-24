@@ -154,6 +154,9 @@ class Board:
         self._cells[from_pos] = None
 
         if captured is not None:
+            # §Jieqi: captured hidden piece is revealed to the capturer
+            if not captured.revealed:
+                captured = replace(captured, revealed=True)
             self._captured.append(captured)
 
         self._turn = self._turn.opposite()

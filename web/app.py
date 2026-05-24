@@ -18,8 +18,10 @@ from jieqi.move import pos_to_rc
 from vision.adapter import VisionBoardState, game_state_to_vision_state, vision_state_to_game_state
 
 app = FastAPI(title="Jieqi Web UI")
+import random as _random
+
 _env = JieqiEnv(max_steps=500)
-_env.reset(seed=42)
+_env.reset(seed=_random.randint(0, 999999))
 
 # Chinese piece labels
 _CN = {
@@ -97,7 +99,7 @@ async def load_fen(req: dict) -> dict[str, Any]:
 
 @app.post("/api/reset")
 async def reset() -> dict[str, Any]:
-    _env.reset(seed=42)
+    _env.reset(seed=_random.randint(0, 999999))
     return _board_dict()
 
 
@@ -118,6 +120,18 @@ def _board_dict() -> dict[str, Any]:
             c["label"] = _CN_B.get(pt, "?")
         elif "hidden" in st:
             c["label"] = "暗"
+    # Captured pieces (revealed, so capturer can see them)
+    captured = []
+    for p in _env.board.captured:
+        if p.revealed:
+            label = _CN.get(int(p.true_type), "?") if p.color == 0 else _CN_B.get(int(p.true_type), "?")
+        else:
+            label = "暗"
+        captured.append({
+            "color": int(p.color), "true_type": int(p.true_type),
+            "revealed": p.revealed, "label": label,
+        })
+    d["captured"] = captured
     return d
 
 

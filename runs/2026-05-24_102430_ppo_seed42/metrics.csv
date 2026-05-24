@@ -1,0 +1,3 @@
+total_steps,avg_return,avg_len,policy_loss,value_loss,entropy,approx_kl,clip_frac,explained_var,episode
+200,0.0,50.0,0.3257,0.0035,8.9225,30.851209,1.0,-0.1932,4
+400,0.0,50.0,0.3213,0.0036,8.9352,29.700245,1.0,-1.3285,8

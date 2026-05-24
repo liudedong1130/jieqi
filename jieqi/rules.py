@@ -75,12 +75,15 @@ def _count_between(board: Board, from_pos: int, to_pos: int) -> int:
 _KING_DIRS = [(0, 1), (0, -1), (1, 0), (-1, 0)]
 
 
-def _king_moves(board: Board, row: int, col: int, color: Color) -> list[Move]:
+def _king_moves(board: Board, row: int, col: int, color: Color, revealed: bool = True) -> list[Move]:
     moves: list[Move] = []
     from_pos = rc_to_pos(row, col)
     for dr, dc in _KING_DIRS:
         nr, nc = row + dr, col + dc
-        if not is_valid_rc(nr, nc) or not _in_palace(nr, nc, color):
+        if not is_valid_rc(nr, nc):
+            continue
+        # Palace restriction only for revealed king (§Jieqi: hidden can leave)
+        if revealed and not _in_palace(nr, nc, color):
             continue
         to_pos = rc_to_pos(nr, nc)
         if _can_occupy(board, to_pos, color):
@@ -91,13 +94,14 @@ def _king_moves(board: Board, row: int, col: int, color: Color) -> list[Move]:
 _ADVISOR_DIRS = [(1, 1), (1, -1), (-1, 1), (-1, -1)]
 
 
-def _advisor_moves(board: Board, row: int, col: int, color: Color) -> list[Move]:
+def _advisor_moves(board: Board, row: int, col: int, color: Color, revealed: bool = True) -> list[Move]:
     moves: list[Move] = []
     from_pos = rc_to_pos(row, col)
     for dr, dc in _ADVISOR_DIRS:
         nr, nc = row + dr, col + dc
-        if not is_valid_rc(nr, nc) or not _in_palace(nr, nc, color):
+        if not is_valid_rc(nr, nc):
             continue
+        # §Jieqi: advisors can leave the palace (unlike standard Xiangqi)
         to_pos = rc_to_pos(nr, nc)
         if _can_occupy(board, to_pos, color):
             moves.append(Move(from_pos, to_pos))
@@ -108,7 +112,7 @@ _ELEPHANT_DIRS = [(2, 2), (2, -2), (-2, 2), (-2, -2)]
 _ELEPHANT_EYES = [(1, 1), (1, -1), (-1, 1), (-1, -1)]
 
 
-def _elephant_moves(board: Board, row: int, col: int, color: Color) -> list[Move]:
+def _elephant_moves(board: Board, row: int, col: int, color: Color, revealed: bool = True) -> list[Move]:
     moves: list[Move] = []
     from_pos = rc_to_pos(row, col)
     for (dr, dc), (er, ec) in zip(_ELEPHANT_DIRS, _ELEPHANT_EYES):
@@ -116,11 +120,7 @@ def _elephant_moves(board: Board, row: int, col: int, color: Color) -> list[Move
         eye_r, eye_c = row + er, col + ec
         if not is_valid_rc(nr, nc):
             continue
-        # Cannot cross river
-        if color == Color.RED and nr < 5:
-            continue
-        if color == Color.BLACK and nr > 4:
-            continue
+        # §Jieqi: elephants CAN cross the river (unlike standard Xiangqi)
         # Eye blocked
         if board[rc_to_pos(eye_r, eye_c)] is not None:
             continue
@@ -143,7 +143,7 @@ _HORSE_STEPS = [
 ]
 
 
-def _horse_moves(board: Board, row: int, col: int, color: Color) -> list[Move]:
+def _horse_moves(board: Board, row: int, col: int, color: Color, revealed: bool = True) -> list[Move]:
     moves: list[Move] = []
     from_pos = rc_to_pos(row, col)
     for lr, lc, tr, tc in _HORSE_STEPS:
@@ -163,7 +163,7 @@ def _horse_moves(board: Board, row: int, col: int, color: Color) -> list[Move]:
 _ROOK_DIRS = [(0, 1), (0, -1), (1, 0), (-1, 0)]
 
 
-def _rook_moves(board: Board, row: int, col: int, color: Color) -> list[Move]:
+def _rook_moves(board: Board, row: int, col: int, color: Color, revealed: bool = True) -> list[Move]:
     moves: list[Move] = []
     from_pos = rc_to_pos(row, col)
     for dr, dc in _ROOK_DIRS:
@@ -181,7 +181,7 @@ def _rook_moves(board: Board, row: int, col: int, color: Color) -> list[Move]:
     return moves
 
 
-def _cannon_moves(board: Board, row: int, col: int, color: Color) -> list[Move]:
+def _cannon_moves(board: Board, row: int, col: int, color: Color, revealed: bool = True) -> list[Move]:
     moves: list[Move] = []
     from_pos = rc_to_pos(row, col)
     for dr, dc in _ROOK_DIRS:
@@ -212,7 +212,7 @@ def _cannon_moves(board: Board, row: int, col: int, color: Color) -> list[Move]:
     return moves
 
 
-def _pawn_moves(board: Board, row: int, col: int, color: Color) -> list[Move]:
+def _pawn_moves(board: Board, row: int, col: int, color: Color, revealed: bool = True) -> list[Move]:
     moves: list[Move] = []
     from_pos = rc_to_pos(row, col)
     crossed = _has_crossed_river(row, color)
@@ -258,6 +258,10 @@ def generate_piece_moves(board: Board, row: int, col: int) -> list[Move]:
     Pseudo-legal means the move obeys piece-specific rules (movement pattern,
     blocking, palace/river constraints) but may leave the own king in check
     or cause the two kings to face each other.
+
+    In Jieqi, hidden pieces CAN cross the river / leave the palace —
+    they follow the movement *pattern* of their origin_type but without
+    zone restrictions, since their true identity is unknown.
     """
     piece = board[rc_to_pos(row, col)]
     if piece is None:
@@ -266,7 +270,7 @@ def generate_piece_moves(board: Board, row: int, col: int) -> list[Move]:
     gen = _GENERATORS.get(piece.effective_type)
     if gen is None:
         return []
-    return gen(board, row, col, piece.color)
+    return gen(board, row, col, piece.color, piece.revealed)
 
 
 # ==============================================================================

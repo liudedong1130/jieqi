@@ -4,3 +4,6 @@ __pycache__/
 .pytest_cache/
 .DS_Store
 results.json
+runs/
+az_pretrained.pt
+results.json
