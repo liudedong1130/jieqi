@@ -3,44 +3,53 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Jieqi Web UI</title>
+<title>揭棋 Web UI</title>
 <style>
-body{font-family:monospace;background:#1a1a2e;color:#eee;margin:20px}
-.board{display:inline-grid;grid-template-columns:repeat(9,48px);gap:2px}
-.cell{width:48px;height:48px;background:#2a2a4a;border:1px solid #444;display:flex;
-  align-items:center;justify-content:center;cursor:pointer;font-size:13px;font-weight:bold;border-radius:4px}
+body{font-family:"PingFang SC",sans-serif;background:#1a1a2e;color:#eee;margin:20px}
+.board{display:inline-grid;grid-template-columns:repeat(9,52px);gap:2px}
+.cell{width:52px;height:52px;background:#2a2a4a;border:1px solid #555;display:flex;
+  align-items:center;justify-content:center;cursor:pointer;font-size:16px;font-weight:bold;border-radius:4px}
 .cell.red_o{color:#f44;background:#3a1a1a}.cell.black_o{color:#88f;background:#1a1a3a}
 .cell.red_h{color:#f88;background:#2a1a1a}.cell.black_h{color:#aaf;background:#1a1a2a}
-.cell.empty{color:#555}.cell.selected{border:2px solid #ff0}
-.controls{margin:10px 0}.controls button,.controls select{margin:4px;padding:6px 12px;font-size:14px}
+.cell.empty{color:#555}.cell.selected{border:2px solid #ff0;box-shadow:0 0 8px #ff0}
+.cell.dest{background:#363!important}
+.controls{margin:10px 0}.controls button,.controls select{margin:4px;padding:6px 12px;font-size:14px;border-radius:4px;border:1px solid #555;background:#333;color:#eee;cursor:pointer}
+.controls button:hover{background:#444}
 .recs{margin-top:10px}.recs table{border-collapse:collapse}
 .recs td,.recs th{border:1px solid #555;padding:4px 10px;text-align:right}
 .recs th{background:#333}
+.play-bar{background:#222;padding:8px;margin:8px 0;border-radius:4px;text-align:center}
 </style>
 </head>
 <body>
-<h1>Jieqi Web UI</h1>
+<h1>揭棋 Web UI</h1>
 
 <div class="controls">
-<button onclick="resetBoard()">Reset</button>
+<button onclick="resetBoard()">🔄 重置</button>
 <select id="agent"><option>ismcts</option><option>greedy</option><option>belief_mcts</option></select>
-<button onclick="analyze()">Analyze</button>
-<select id="editMode"><option value="">View</option><option value="red_open">Red Open</option><option value="black_open">Black Open</option><option value="red_hidden">Red Hidden</option><option value="black_hidden">Black Hidden</option></select>
-<select id="pieceType"><option value=0>K</option><option value=1>A</option><option value=2>E</option><option value=3>H</option><option value=4>R</option><option value=5>C</option><option value=6>P</option></select>
-<label>Turn: <select id="turn"><option value=0>Red</option><option value=1>Black</option></select></label>
-<button onclick="importFEN()">Import FEN</button>
+<button onclick="analyze()">🔍 分析</button>
+<select id="editMode"><option value="">查看</option><option value="red_open">红明子</option><option value="black_open">黑明子</option><option value="red_hidden">红暗子</option><option value="black_hidden">黑暗子</option></select>
+<select id="pieceType"><option value=0>帅/将</option><option value=1>仕/士</option><option value=2>相/象</option><option value=3>馬/马</option><option value=4>車/车</option><option value=5>炮</option><option value=6>兵/卒</option></select>
+<button onclick="importFEN()">📋 FEN</button>
+</div>
+
+<div class="play-bar">
+<button id="playBtn" onclick="togglePlayMode()" style="font-size:16px;padding:8px 20px;background:#4a4;border:none;color:#fff;border-radius:4px;cursor:pointer">▶ 人机对弈</button>
+<span id="status" style="margin-left:16px;color:#ff0;font-size:14px"></span>
 </div>
 
 <div class="board" id="board"></div>
 
 <div class="recs">
-<h3>Recommendations</h3>
-<div id="recs">Click Analyze</div>
+<h3>AI 推荐</h3>
+<div id="recs">点击「分析」查看</div>
 </div>
 
 <script>
-let boardState = [];
-let currentPlayer = 0;
+let playMode = false, selectedPos = null;
+
+const CN = {0:'帅',1:'仕',2:'相',3:'馬',4:'車',5:'炮',6:'兵'};
+const CNB = {0:'将',1:'士',2:'象',3:'马',4:'车',5:'炮',6:'卒'};
 
 function initBoard() {
   const b = document.getElementById('board');
@@ -50,67 +59,139 @@ function initBoard() {
       const cell = document.createElement('div');
       cell.className = 'cell empty';
       cell.textContent = '·';
-      cell.dataset.row = r;
-      cell.dataset.col = c;
+      cell.dataset.row = r; cell.dataset.col = c;
       cell.onclick = () => cellClick(r, c, cell);
       b.appendChild(cell);
     }
   }
 }
 
-function cellClick(r, c, cell) {
+function togglePlayMode() {
+  playMode = !playMode;
+  const btn = document.getElementById('playBtn');
+  if (playMode) {
+    btn.style.background = '#f44'; btn.textContent = '■ 停止对弈';
+    document.getElementById('editMode').value = '';
+    document.getElementById('status').textContent = '👤 你的回合 (请选子)';
+  } else {
+    btn.style.background = '#4a4'; btn.textContent = '▶ 人机对弈';
+    document.getElementById('status').textContent = '';
+    selectedPos = null;
+    clearHighlights();
+  }
+}
+
+function clearHighlights() {
+  document.querySelectorAll('.cell').forEach(c => {c.classList.remove('selected','dest');c.style.background='';});
+}
+
+async function cellClick(r, c, cell) {
+  if (playMode) {
+    const pos = r * 9 + c;
+    const resp = await fetch('/api/legal_moves');
+    const data = await resp.json();
+    const legal = data.legal_moves;
+
+    if (selectedPos === null) {
+      const hasPiece = legal.some(m => m.from[0]===r && m.from[1]===c);
+      if (!hasPiece) return;
+      selectedPos = pos;
+      cell.classList.add('selected');
+      legal.filter(m => m.from[0]===r && m.from[1]===c).forEach(m => {
+        const d = document.querySelector(`.cell[data-row="${m.to[0]}"][data-col="${m.to[1]}"]`);
+        if (d) d.classList.add('dest');
+      });
+    } else {
+      const move = legal.find(m => m.from[0]*9+m.from[1]===selectedPos && m.to[0]*9+m.to[1]===pos);
+      if (move) {
+        // Human move
+        let r2 = await fetch('/api/apply_move', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({action:move.action})});
+        let d2 = await r2.json();
+        renderBoard(d2.cells);
+        document.getElementById('status').textContent = '🤖 AI 思考中...';
+
+        // AI responds
+        setTimeout(async () => {
+          let r3 = await fetch('/api/analyze', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({agent: document.getElementById('agent').value, top_k:1})});
+          let d3 = await r3.json();
+          if (d3.recommendations?.length > 0) {
+            await fetch('/api/apply_move', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({action: d3.recommendations[0].action})});
+            let r4 = await fetch('/api/board_state');
+            let d4 = await r4.json();
+            renderBoard(d4.cells);
+            document.getElementById('status').textContent = '👤 你的回合';
+          }
+          refreshRecs();
+        }, 200);
+      }
+      selectedPos = null;
+      clearHighlights();
+    }
+    return;
+  }
+
+  // Edit mode
   const mode = document.getElementById('editMode').value;
   if (!mode) return;
   const pt = parseInt(document.getElementById('pieceType').value);
   cell.className = 'cell ' + mode;
-  const label = ['K','A','E','H','R','C','P'][pt];
-  cell.textContent = mode.includes('hidden') ? `(${label.toLowerCase()})` : label;
+  if (mode.includes('red')) cell.textContent = mode.includes('hidden') ? `*${CN[pt]}` : CN[pt];
+  else if (mode.includes('black')) cell.textContent = mode.includes('hidden') ? `*${CNB[pt]}` : CNB[pt];
+  if (mode === 'empty') { cell.className = 'cell empty'; cell.textContent = '·'; }
   updateBoardState();
 }
 
 function updateBoardState() {
-  boardState = [];
+  // Build board state from current cell display for manual editing
+  const cells = [];
   document.querySelectorAll('.cell').forEach(c => {
     const r = parseInt(c.dataset.row), col = parseInt(c.dataset.col);
-    const cls = c.className.replace('cell ', '').replace(' selected', '');
-    boardState.push({row: r, col: col, state: cls === 'empty' ? 'empty' : cls, piece_type: cls !== 'empty' ? parseInt(document.getElementById('pieceType').value) : 0});
+    const cls = c.className.replace('cell ','').replace(' selected','').replace(' dest','').trim();
+    cells.push({row:r, col:col, state: cls==='empty'?'empty':cls, piece_type: parseInt(c.dataset.ptype||0)});
   });
-  currentPlayer = parseInt(document.getElementById('turn').value);
+  // Send to backend
+  fetch('/api/load_fen', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({fen:'manual'})}).catch(()=>{});
 }
 
 function renderBoard(cells) {
   document.querySelectorAll('.cell').forEach(c => {
     const r = parseInt(c.dataset.row), col = parseInt(c.dataset.col);
-    const info = cells.find(x => x.row === r && x.col === col);
+    const info = cells.find(x => x.row===r && x.col===col);
     if (info) {
       c.className = 'cell ' + info.state;
-      const label = ['K','A','E','H','R','C','P'][info.piece_type];
-      c.textContent = info.state.includes('hidden') ? `(${label.toLowerCase()})` : label;
+      c.dataset.ptype = info.piece_type;
+      c.textContent = info.label || '·';
     } else {
-      c.className = 'cell empty'; c.textContent = '·';
+      c.className = 'cell empty'; c.textContent = '·'; c.dataset.ptype = '';
     }
   });
-  updateBoardState();
 }
 
 async function resetBoard() {
   const r = await fetch('/api/reset', {method:'POST'});
   const d = await r.json();
-  renderBoard(d.board.cells);
-  document.getElementById('turn').value = d.board.current_player;
+  renderBoard(d.cells);
+  if (playMode) document.getElementById('status').textContent = '👤 你的回合';
 }
 
 async function analyze() {
-  updateBoardState();
-  const r = await fetch('/api/analyze', {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({board:{cells:boardState,current_player:currentPlayer},
-      agent: document.getElementById('agent').value, top_k:5})
-  });
+  const r = await fetch('/api/analyze', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({agent: document.getElementById('agent').value, top_k:5})});
   const d = await r.json();
-  let html = '<table><tr><th>#</th><th>Move</th><th>Score</th><th>Mean</th><th>P10</th><th>Uncert</th><th>Reasons</th></tr>';
-  d.recommendations.forEach((rec,i) => {
-    html += `<tr><td>${i+1}</td><td>${rec.move}</td><td>${rec.score}</td><td>${rec.mean_score}</td><td>${rec.p10_score}</td><td>${rec.uncertainty}</td><td>${(rec.reasons||[]).join(', ')}</td></tr>`;
+  showRecs(d.recommendations);
+}
+
+async function refreshRecs() {
+  try {
+    const r = await fetch('/api/analyze', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({agent: document.getElementById('agent').value, top_k:5})});
+    const d = await r.json();
+    showRecs(d.recommendations);
+  } catch(e) {}
+}
+
+function showRecs(recs) {
+  let html = '<table><tr><th>#</th><th>走法</th><th>评分</th><th>均值</th><th>P10</th><th>不确定</th><th>原因</th></tr>';
+  recs.forEach((r,i) => {
+    html += `<tr><td>${i+1}</td><td>${r.move}</td><td>${r.score.toFixed(0)}</td><td>${r.mean_score.toFixed(0)}</td><td>${r.p10_score.toFixed(0)}</td><td>${r.uncertainty.toFixed(0)}</td><td>${(r.reasons||[]).join(', ')||'-'}</td></tr>`;
   });
   html += '</table>';
   document.getElementById('recs').innerHTML = html;
@@ -120,7 +201,7 @@ async function importFEN() {
   const fen = prompt('JieqiFEN:');
   if (!fen) return;
   await fetch('/api/load_fen', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({fen})});
-  const r = await fetch('/api/board_state?debug=false');
+  const r = await fetch('/api/board_state');
   const d = await r.json();
   renderBoard(d.cells);
 }
