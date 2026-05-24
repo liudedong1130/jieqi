@@ -132,6 +132,54 @@ class ISMCTSAgent:
             self._use_policy_prior = False
             self._prior_model = None
 
+    def get_policy(self, env: JieqiEnv) -> tuple[np.ndarray, int]:
+        """Return (visit_count_policy, chosen_action).
+
+        visit_count_policy is a (8100,) array summing to 1.
+        This is the target distribution for AlphaZero-style training.
+        """
+        actions = env.legal_actions()
+        if len(actions) == 1:
+            policy = np.zeros(8100, dtype=np.float32)
+            policy[actions[0]] = 1.0
+            return policy, actions[0]
+
+        belief = BeliefState.from_env(env)
+        obs = env.observation()
+        player = env.current_player()
+
+        prior = self._get_prior(obs, env.legal_action_mask()) if self._use_policy_prior else None
+
+        root = ISMCTSNode()
+        root.visit_count = 1
+
+        for a in actions:
+            p = float(prior[a]) if prior is not None else 1.0 / len(actions)
+            root.children[a] = ISMCTSNode(prior=p)
+
+        for _ in range(self.num_simulations):
+            det_board = sample_determinization(belief, self._rng)
+            self._simulate(root, det_board, actions, belief, player, depth=0)
+
+        counts = np.zeros(8100, dtype=np.float64)
+        for a in actions:
+            counts[a] = root.children[a].visit_count
+
+        counts = counts ** (1.0 / max(self.temperature, 0.1))
+        total = counts.sum()
+        probs = counts / total if total > 0 else np.ones(8100) / 8100
+
+        r = self._rng.random()
+        cum = 0.0
+        chosen = actions[-1]
+        for a in actions:
+            cum += probs[a]
+            if r <= cum:
+                chosen = a
+                break
+
+        return probs.astype(np.float32), chosen
+
     def select_action(self, env: JieqiEnv) -> int:
         actions = env.legal_actions()
         if len(actions) == 1:

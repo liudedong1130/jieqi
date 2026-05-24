@@ -633,6 +633,74 @@ class TestISMCTS:
         )
         assert result["errors"] == 0
 
+# ---------------------------------------------------------------------------
+#  AlphaZero self-play
+# ---------------------------------------------------------------------------
+
+
+class TestAlphaZeroTrain:
+    def test_generate_selfplay_no_error(self) -> None:
+        from rl.ismcts import ISMCTSAgent
+        from rl.az_selfplay import generate_az_selfplay_data
+
+        agent = ISMCTSAgent(num_simulations=10, max_depth=3, temperature=1.0, seed=42)
+        ds = generate_az_selfplay_data(agent, num_games=2, max_steps=40, seed=123)
+        assert len(ds) > 0
+
+    def test_ismcts_get_policy(self) -> None:
+        from rl.ismcts import ISMCTSAgent
+        from jieqi.env import JieqiEnv
+
+        env = JieqiEnv()
+        env.reset(seed=42)
+        agent = ISMCTSAgent(num_simulations=20, seed=1)
+        policy, action = agent.get_policy(env)
+        assert policy.shape == (8100,)
+        assert abs(policy.sum() - 1.0) < 1e-4
+        assert action in env.legal_actions()
+
+    def test_train_alphazero_script(self) -> None:
+        import subprocess, sys
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as d:
+            script = Path(__file__).parent.parent / "scripts" / "train_alphazero.py"
+            result = subprocess.run(
+                [sys.executable, str(script),
+                 "--iterations", "2", "--selfplay-games", "2",
+                 "--simulations", "10", "--max-steps", "40",
+                 "--epochs", "2", "--batch-size", "16",
+                 "--eval-interval", "2", "--eval-games", "1",
+                 "--checkpoint-dir", d, "--seed", "42"],
+                capture_output=True, text=True, timeout=300,
+            )
+            assert result.returncode == 0
+            assert os.path.exists(os.path.join(d, "latest.pt"))
+
+    def test_az_checkpoint_loadable(self) -> None:
+        import subprocess, sys
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as d:
+            script = Path(__file__).parent.parent / "scripts" / "train_alphazero.py"
+            subprocess.run(
+                [sys.executable, str(script),
+                 "--iterations", "1", "--selfplay-games", "1",
+                 "--simulations", "10", "--max-steps", "30",
+                 "--epochs", "1", "--batch-size", "16",
+                 "--eval-interval", "1", "--eval-games", "1",
+                 "--checkpoint-dir", d, "--seed", "42"],
+                capture_output=True, text=True, timeout=300,
+            )
+            ckpt_path = os.path.join(d, "iter_1.pt")
+            assert os.path.exists(ckpt_path)
+            from agents.policy_agent import PolicyAgent
+            from jieqi.env import JieqiEnv
+            env = JieqiEnv(); env.reset(seed=0)
+            agent = PolicyAgent(ckpt_path, deterministic=True)
+            action = agent.select_action(env)
+            assert action in env.legal_actions()
+
     def test_best_checkpoint_saved(self) -> None:
         import subprocess
         import sys
