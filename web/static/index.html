@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Jieqi Web UI</title>
+<style>
+body{font-family:monospace;background:#1a1a2e;color:#eee;margin:20px}
+.board{display:inline-grid;grid-template-columns:repeat(9,48px);gap:2px}
+.cell{width:48px;height:48px;background:#2a2a4a;border:1px solid #444;display:flex;
+  align-items:center;justify-content:center;cursor:pointer;font-size:13px;font-weight:bold;border-radius:4px}
+.cell.red_o{color:#f44;background:#3a1a1a}.cell.black_o{color:#88f;background:#1a1a3a}
+.cell.red_h{color:#f88;background:#2a1a1a}.cell.black_h{color:#aaf;background:#1a1a2a}
+.cell.empty{color:#555}.cell.selected{border:2px solid #ff0}
+.controls{margin:10px 0}.controls button,.controls select{margin:4px;padding:6px 12px;font-size:14px}
+.recs{margin-top:10px}.recs table{border-collapse:collapse}
+.recs td,.recs th{border:1px solid #555;padding:4px 10px;text-align:right}
+.recs th{background:#333}
+</style>
+</head>
+<body>
+<h1>Jieqi Web UI</h1>
+
+<div class="controls">
+<button onclick="resetBoard()">Reset</button>
+<select id="agent"><option>ismcts</option><option>greedy</option><option>belief_mcts</option></select>
+<button onclick="analyze()">Analyze</button>
+<select id="editMode"><option value="">View</option><option value="red_open">Red Open</option><option value="black_open">Black Open</option><option value="red_hidden">Red Hidden</option><option value="black_hidden">Black Hidden</option></select>
+<select id="pieceType"><option value=0>K</option><option value=1>A</option><option value=2>E</option><option value=3>H</option><option value=4>R</option><option value=5>C</option><option value=6>P</option></select>
+<label>Turn: <select id="turn"><option value=0>Red</option><option value=1>Black</option></select></label>
+<button onclick="importFEN()">Import FEN</button>
+</div>
+
+<div class="board" id="board"></div>
+
+<div class="recs">
+<h3>Recommendations</h3>
+<div id="recs">Click Analyze</div>
+</div>
+
+<script>
+let boardState = [];
+let currentPlayer = 0;
+
+function initBoard() {
+  const b = document.getElementById('board');
+  b.innerHTML = '';
+  for (let r = 0; r < 10; r++) {
+    for (let c = 0; c < 9; c++) {
+      const cell = document.createElement('div');
+      cell.className = 'cell empty';
+      cell.textContent = '·';
+      cell.dataset.row = r;
+      cell.dataset.col = c;
+      cell.onclick = () => cellClick(r, c, cell);
+      b.appendChild(cell);
+    }
+  }
+}
+
+function cellClick(r, c, cell) {
+  const mode = document.getElementById('editMode').value;
+  if (!mode) return;
+  const pt = parseInt(document.getElementById('pieceType').value);
+  cell.className = 'cell ' + mode;
+  const label = ['K','A','E','H','R','C','P'][pt];
+  cell.textContent = mode.includes('hidden') ? `(${label.toLowerCase()})` : label;
+  updateBoardState();
+}
+
+function updateBoardState() {
+  boardState = [];
+  document.querySelectorAll('.cell').forEach(c => {
+    const r = parseInt(c.dataset.row), col = parseInt(c.dataset.col);
+    const cls = c.className.replace('cell ', '').replace(' selected', '');
+    boardState.push({row: r, col: col, state: cls === 'empty' ? 'empty' : cls, piece_type: cls !== 'empty' ? parseInt(document.getElementById('pieceType').value) : 0});
+  });
+  currentPlayer = parseInt(document.getElementById('turn').value);
+}
+
+function renderBoard(cells) {
+  document.querySelectorAll('.cell').forEach(c => {
+    const r = parseInt(c.dataset.row), col = parseInt(c.dataset.col);
+    const info = cells.find(x => x.row === r && x.col === col);
+    if (info) {
+      c.className = 'cell ' + info.state;
+      const label = ['K','A','E','H','R','C','P'][info.piece_type];
+      c.textContent = info.state.includes('hidden') ? `(${label.toLowerCase()})` : label;
+    } else {
+      c.className = 'cell empty'; c.textContent = '·';
+    }
+  });
+  updateBoardState();
+}
+
+async function resetBoard() {
+  const r = await fetch('/api/reset', {method:'POST'});
+  const d = await r.json();
+  renderBoard(d.board.cells);
+  document.getElementById('turn').value = d.board.current_player;
+}
+
+async function analyze() {
+  updateBoardState();
+  const r = await fetch('/api/analyze', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({board:{cells:boardState,current_player:currentPlayer},
+      agent: document.getElementById('agent').value, top_k:5})
+  });
+  const d = await r.json();
+  let html = '<table><tr><th>#</th><th>Move</th><th>Score</th><th>Mean</th><th>P10</th><th>Uncert</th><th>Reasons</th></tr>';
+  d.recommendations.forEach((rec,i) => {
+    html += `<tr><td>${i+1}</td><td>${rec.move}</td><td>${rec.score}</td><td>${rec.mean_score}</td><td>${rec.p10_score}</td><td>${rec.uncertainty}</td><td>${(rec.reasons||[]).join(', ')}</td></tr>`;
+  });
+  html += '</table>';
+  document.getElementById('recs').innerHTML = html;
+}
+
+async function importFEN() {
+  const fen = prompt('JieqiFEN:');
+  if (!fen) return;
+  await fetch('/api/load_fen', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({fen})});
+  const r = await fetch('/api/board_state?debug=false');
+  const d = await r.json();
+  renderBoard(d.cells);
+}
+
+initBoard();
+resetBoard();
+</script>
+</body>
+</html>
