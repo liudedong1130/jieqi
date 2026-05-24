@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 
@@ -700,6 +701,38 @@ class TestAlphaZeroTrain:
             agent = PolicyAgent(ckpt_path, deterministic=True)
             action = agent.select_action(env)
             assert action in env.legal_actions()
+
+class TestBenchmark:
+    def test_benchmark_runs(self) -> None:
+        import subprocess, sys
+        from pathlib import Path
+
+        script = Path(__file__).parent.parent / "scripts" / "benchmark_inference.py"
+        result = subprocess.run(
+            [sys.executable, str(script), "--moves", "5"],
+            capture_output=True, text=True, timeout=120,
+        )
+        assert result.returncode == 0
+        assert "Avg(ms)" in result.stdout
+
+    def test_benchmark_json_output(self) -> None:
+        import subprocess, sys, tempfile
+        from pathlib import Path
+
+        script = Path(__file__).parent.parent / "scripts" / "benchmark_inference.py"
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+            tmp = f.name
+        try:
+            result = subprocess.run(
+                [sys.executable, str(script), "--moves", "5", "--output", tmp],
+                capture_output=True, text=True, timeout=120,
+            )
+            assert result.returncode == 0
+            with open(tmp) as f:
+                data = json.load(f)
+            assert len(data) > 0
+        finally:
+            os.unlink(tmp)
 
     def test_best_checkpoint_saved(self) -> None:
         import subprocess
