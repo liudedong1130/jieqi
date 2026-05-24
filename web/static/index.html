@@ -135,8 +135,8 @@ async function cellClick(r, c, cell) {
   if (!mode) return;
   const pt = parseInt(document.getElementById('pieceType').value);
   cell.className = 'cell ' + mode;
-  if (mode.includes('red')) cell.textContent = mode.includes('hidden') ? `*${CN[pt]}` : CN[pt];
-  else if (mode.includes('black')) cell.textContent = mode.includes('hidden') ? `*${CNB[pt]}` : CNB[pt];
+  if (mode.includes('red')) cell.textContent = mode.includes('hidden') ? '暗' : CN[pt];
+  else if (mode.includes('black')) cell.textContent = mode.includes('hidden') ? '暗' : CNB[pt];
   if (mode === 'empty') { cell.className = 'cell empty'; cell.textContent = '·'; }
   updateBoardState();
 }

@@ -116,10 +116,8 @@ def _board_dict() -> dict[str, Any]:
             c["label"] = _CN.get(pt, "?")
         elif st == "black_open":
             c["label"] = _CN_B.get(pt, "?")
-        elif st == "red_hidden":
-            c["label"] = f"*{_CN.get(pt, '?')}"
-        elif st == "black_hidden":
-            c["label"] = f"*{_CN_B.get(pt, '?')}"
+        elif "hidden" in st:
+            c["label"] = "暗"
     return d
 
 
