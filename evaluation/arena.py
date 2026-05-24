@@ -10,6 +10,7 @@ from agents.greedy_agent import GreedyAgent
 from agents.policy_agent import PolicyAgent
 from agents.random_agent import RandomAgent
 from agents.rollout_agent import RolloutAgent
+from rl.ismcts import ISMCTSAgent
 from evaluation.elo import INITIAL_ELO, update_elo
 from jieqi.env import JieqiEnv
 
@@ -18,6 +19,7 @@ _SIMPLE_AGENTS: dict[str, type] = {
     "greedy": GreedyAgent,
     "rollout": RolloutAgent,
     "belief_mcts": BeliefMCTSAgent,
+    "ismcts": ISMCTSAgent,
 }
 
 # ---------------------------------------------------------------------------

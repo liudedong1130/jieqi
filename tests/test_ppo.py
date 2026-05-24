@@ -585,6 +585,54 @@ class TestOpponentPool:
             assert result.returncode == 0
             assert "Initialized model from" in result.stdout
 
+# ---------------------------------------------------------------------------
+#  ISMCTS
+# ---------------------------------------------------------------------------
+
+
+class TestISMCTS:
+    def test_select_action_legal(self) -> None:
+        from rl.ismcts import ISMCTSAgent
+        from jieqi.env import JieqiEnv
+
+        env = JieqiEnv()
+        env.reset(seed=42)
+        agent = ISMCTSAgent(num_simulations=20, max_depth=3, temperature=1.0, seed=1)
+        for _ in range(10):
+            action = agent.select_action(env)
+            assert action in env.legal_actions()
+            env.step(action)
+            if sum(env.legal_action_mask()) == 0:
+                break
+
+    def test_no_true_type_peek(self) -> None:
+        from rl.ismcts import ISMCTSAgent
+        from jieqi.env import JieqiEnv
+
+        env = JieqiEnv()
+        env.reset(seed=42)
+        agent = ISMCTSAgent(num_simulations=20, seed=1)
+        action = agent.select_action(env)
+        assert action in env.legal_actions()
+
+    def test_ismcts_vs_random(self) -> None:
+        from scripts.evaluate import run_eval
+
+        result = run_eval(
+            agent_a_name="ismcts", agent_b_name="random",
+            n_games=4, max_steps=100, seed=42, swap=False,
+        )
+        assert result["errors"] == 0
+
+    def test_ismcts_vs_greedy(self) -> None:
+        from scripts.evaluate import run_eval
+
+        result = run_eval(
+            agent_a_name="ismcts", agent_b_name="greedy",
+            n_games=2, max_steps=80, seed=42, swap=False,
+        )
+        assert result["errors"] == 0
+
     def test_best_checkpoint_saved(self) -> None:
         import subprocess
         import sys
