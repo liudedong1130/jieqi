@@ -19,6 +19,7 @@ from evaluation.arena import AgentConfig, Arena
 from jieqi.env import JieqiEnv
 from rl.opponent_pool import OpponentPool
 from rl.trainer import PPOTrainer
+from utils.run_manager import RunManager
 
 # =============================================================================
 #  CSV Logger
@@ -96,6 +97,14 @@ def main() -> None:
 
     PPOTrainer.set_seed(args.seed)
     os.makedirs(args.checkpoint_dir, exist_ok=True)
+
+    # Run manager
+    run = RunManager(
+        algo="ppo", seed=args.seed,
+        config={"algo": "ppo", "model": args.model, "episodes": args.episodes,
+                 "lr": args.lr, "gamma": args.gamma, "seed": args.seed,
+                 "init_checkpoint": args.init_checkpoint or "none"},
+    )
 
     # CSV logger
     csv_headers = [
@@ -197,6 +206,11 @@ def main() -> None:
                 trainer.save(os.path.join(args.checkpoint_dir, "best_vs_belief_mcts.pt"))
             os.remove(tmp_ckpt)
             print(f"  eval: vs random {er['win_rate']:.1%}  vs greedy {eg['win_rate']:.1%}  vs bmcts {eb['win_rate']:.1%}")
+            run.log_arena_result({
+                "episode": trainer.episode_count,
+                "vs_random": er["win_rate"], "vs_greedy": eg["win_rate"],
+                "vs_belief_mcts": eb["win_rate"],
+            })
 
         # Add current model to opponent pool
         if pool is not None and args.add_checkpoint_interval > 0 and ep % args.add_checkpoint_interval == 0:
@@ -226,6 +240,10 @@ def main() -> None:
                 round(eval_vs_belief_mcts, 4) if eval_vs_belief_mcts is not None else "",
             ]
             logger.log(row)
+            # Also log to run manager
+            metric_dict = dict(zip(csv_headers[1:], row[1:])) if len(row) == len(csv_headers) else {}
+            metric_dict["episode"] = row[0] if row else 0
+            run.log_metrics({k: v for k, v in metric_dict.items() if v != ""})
             print(
                 f"ep {trainer.episode_count:5d} | "
                 f"ret {avg_r:+.2f} | len {avg_l:5.0f} | "
@@ -245,7 +263,8 @@ def main() -> None:
         trainer.save(os.path.join(args.checkpoint_dir, "latest.pt"))
 
     logger.close()
-    print(f"\nDone. Metrics → {csv_path}")
+    run.close()
+    print(f"\nDone. Run → {run.run_dir}")
 
 
 if __name__ == "__main__":
