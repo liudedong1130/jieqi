@@ -141,6 +141,7 @@ def main() -> None:
                 timeout=args.musesfish_cpp_timeout,
                 min_depth=args.musesfish_cpp_min_depth,
                 max_depth=args.musesfish_cpp_max_depth,
+                persistent=True,
                 fallback=False,
             )
         else:
@@ -331,6 +332,8 @@ def main() -> None:
         trainer.save(os.path.join(args.checkpoint_dir, "latest.pt"))
 
     logger.close()
+    if hasattr(imitation_agent, "close"):
+        imitation_agent.close()
     run.close()
     print(f"\nDone. Run → {run.run_dir}")
 

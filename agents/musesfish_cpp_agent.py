@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import os
+import select
 import subprocess
+import time
 from pathlib import Path
 
 import numpy as np
@@ -106,17 +109,21 @@ class MusesfishCppAgent:
         timeout: float = 3.0,
         min_depth: int = 5,
         max_depth: int = 6,
+        persistent: bool = True,
         fallback: bool = True,
     ) -> None:
         self.timeout = timeout
         self.min_depth = min_depth
         self.max_depth = max(min_depth, max_depth)
+        self.persistent = persistent
         root = Path(__file__).resolve().parent.parent
         self.binary_path = Path(binary_path) if binary_path else (
             root / "agents" / "vendor" / "musesfish_cpp" / "build" / "musesfish_query"
         )
         self.score_file = root / "agents" / "vendor" / "musesfish_cpp" / "score.conf"
         self._fallback = MusesfishAgent(seed=seed, think_time=min(timeout, 1.0)) if fallback else None
+        self._worker: subprocess.Popen[bytes] | None = None
+        self._stdout_buffer = b""
 
     def select_action(self, env: JieqiEnv) -> int:
         action = self._select_action_cpp(env)
@@ -144,9 +151,20 @@ class MusesfishCppAgent:
             " ".join(f"{red[k]} {black[k]}" for k in "RNBACP"),
         ]
         payload = "\n".join(header + _state_rows(env)) + "\n"
+        if self.persistent:
+            return self._select_action_persistent(payload)
+        return self._select_action_oneshot(payload)
+
+    def _command(self, *, loop: bool) -> list[str]:
+        cmd = [str(self.binary_path), str(self.score_file), str(self.min_depth), str(self.max_depth)]
+        if loop:
+            cmd.append("--loop")
+        return cmd
+
+    def _select_action_oneshot(self, payload: str) -> int | None:
         try:
             proc = subprocess.run(
-                [str(self.binary_path), str(self.score_file), str(self.min_depth), str(self.max_depth)],
+                self._command(loop=False),
                 input=payload,
                 text=True,
                 capture_output=True,
@@ -159,3 +177,78 @@ class MusesfishCppAgent:
         if not lines:
             return None
         return _ucci_to_action(lines[-1])
+
+    def _select_action_persistent(self, payload: str) -> int | None:
+        proc = self._ensure_worker()
+        if proc is None or proc.stdin is None or proc.stdout is None:
+            return None
+        try:
+            proc.stdin.write(payload.encode("utf-8"))
+            proc.stdin.flush()
+            move = self._read_worker_move(proc.stdout.fileno())
+        except (BrokenPipeError, OSError, ValueError):
+            self.close()
+            return None
+        if move is None:
+            self.close()
+            return None
+        return _ucci_to_action(move)
+
+    def _ensure_worker(self) -> subprocess.Popen[bytes] | None:
+        if self._worker is not None and self._worker.poll() is None:
+            return self._worker
+        if not self.binary_path.exists():
+            return None
+        try:
+            self._worker = subprocess.Popen(
+                self._command(loop=True),
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                bufsize=0,
+            )
+            self._stdout_buffer = b""
+        except OSError:
+            self._worker = None
+        return self._worker
+
+    def _read_worker_move(self, fd: int) -> str | None:
+        deadline = time.monotonic() + self.timeout
+        while True:
+            while b"\n" in self._stdout_buffer:
+                line, self._stdout_buffer = self._stdout_buffer.split(b"\n", 1)
+                text = line.decode("utf-8", errors="replace").strip()
+                if text.startswith("__MOVE__ "):
+                    return text[len("__MOVE__ "):].strip()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return None
+            ready, _, _ = select.select([fd], [], [], remaining)
+            if not ready:
+                return None
+            chunk = os.read(fd, 4096)
+            if not chunk:
+                return None
+            self._stdout_buffer += chunk
+
+    def close(self) -> None:
+        proc = self._worker
+        self._worker = None
+        if proc is None:
+            return
+        if proc.stdin is not None:
+            try:
+                proc.stdin.close()
+            except OSError:
+                pass
+        try:
+            proc.terminate()
+            proc.wait(timeout=0.5)
+        except (OSError, subprocess.TimeoutExpired):
+            try:
+                proc.kill()
+            except OSError:
+                pass
+
+    def __del__(self) -> None:
+        self.close()

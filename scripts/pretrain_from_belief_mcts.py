@@ -71,6 +71,7 @@ def _generate_one_game(args_tuple: tuple) -> tuple[int, list[AZSample], int, str
             timeout=musesfish_cpp_timeout,
             min_depth=musesfish_cpp_min_depth,
             max_depth=musesfish_cpp_max_depth,
+            persistent=True,
             fallback=False,
         )
     else:
@@ -98,6 +99,8 @@ def _generate_one_game(args_tuple: tuple) -> tuple[int, list[AZSample], int, str
             "reward": reward, "terminated": terminated,
         })
         done = terminated or truncated
+    if hasattr(agent, "close"):
+        agent.close()
 
     winner = None
     for mi in reversed(moves_info):
