@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import random
 from collections import defaultdict
+from typing import Any
 
 import numpy as np
 import torch
@@ -41,6 +42,8 @@ class PPOTrainer:
         device: str | None = None,
         model_type: str = "simple_cnn",
         model_kwargs: dict | None = None,
+        imitation_agent: Any | None = None,
+        imitation_coef: float = 0.0,
     ) -> None:
         self.env = env
         self.gamma = gamma
@@ -50,6 +53,8 @@ class PPOTrainer:
         self.value_coef = value_coef
         self.update_epochs = update_epochs
         self.episodes_per_update = episodes_per_update
+        self.imitation_agent = imitation_agent
+        self.imitation_coef = imitation_coef
 
         self.device = _get_device(device)
         self._model_type = model_type
@@ -58,6 +63,8 @@ class PPOTrainer:
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
 
         self._obs_buf: list[np.ndarray] = []
+        self._mask_buf: list[np.ndarray] = []
+        self._teacher_policy_buf: list[np.ndarray] = []
         self._act_buf: list[int] = []
         self._logp_buf: list[float] = []
         self._val_buf: list[float] = []
@@ -96,12 +103,17 @@ class PPOTrainer:
 
         while not done:
             mover = self.env.current_player()
+            legal_mask = self.env.legal_action_mask().copy()
+            teacher_policy = self._teacher_policy(self.env, legal_mask)
             action, log_prob, value = self._select_action(obs)
 
             next_obs, reward, terminated, truncated, _info = self.env.step(action)
             done = terminated or truncated
 
             self._obs_buf.append(obs)
+            self._mask_buf.append(legal_mask)
+            if teacher_policy is not None:
+                self._teacher_policy_buf.append(teacher_policy)
             self._act_buf.append(action)
             self._logp_buf.append(log_prob)
             self._val_buf.append(value)
@@ -154,11 +166,16 @@ class PPOTrainer:
             current = self.env.current_player()
             if current == train_player:
                 # Training policy's move — buffer it
+                legal_mask = self.env.legal_action_mask().copy()
+                teacher_policy = self._teacher_policy(self.env, legal_mask)
                 action, log_prob, value = self._select_action(obs)
                 next_obs, reward, terminated, truncated, _info = self.env.step(action)
                 done = terminated or truncated
 
                 self._obs_buf.append(obs)
+                self._mask_buf.append(legal_mask)
+                if teacher_policy is not None:
+                    self._teacher_policy_buf.append(teacher_policy)
                 self._act_buf.append(action)
                 self._logp_buf.append(log_prob)
                 self._val_buf.append(value)
@@ -211,6 +228,31 @@ class PPOTrainer:
         action = dist.sample().item()
         log_prob = dist.log_prob(torch.tensor(action, device=self.device)).item()
         return action, log_prob, value.item()
+
+    def _teacher_policy(self, env: JieqiEnv, legal_mask: np.ndarray) -> np.ndarray | None:
+        """Return a legal-action teacher policy for the current state, if enabled."""
+        if self.imitation_agent is None or self.imitation_coef <= 0:
+            return None
+
+        if hasattr(self.imitation_agent, "get_policy"):
+            policy, _action = self.imitation_agent.get_policy(env)
+            teacher = np.asarray(policy, dtype=np.float32).copy()
+        else:
+            teacher = np.zeros_like(legal_mask, dtype=np.float32)
+            action = int(self.imitation_agent.select_action(env))
+            if 0 <= action < teacher.shape[0]:
+                teacher[action] = 1.0
+
+        teacher *= legal_mask.astype(np.float32)
+        total = float(teacher.sum())
+        if total <= 0:
+            legal_total = float(legal_mask.sum())
+            if legal_total <= 0:
+                return None
+            teacher = legal_mask.astype(np.float32) / legal_total
+        else:
+            teacher /= total
+        return teacher.astype(np.float32, copy=False)
 
     # ------------------------------------------------------------------
     #  GAE
@@ -273,10 +315,19 @@ class PPOTrainer:
         advantages, returns = self._compute_gae()
 
         obs_t = torch.from_numpy(np.stack(self._obs_buf)).to(self.device)
+        mask_t = torch.from_numpy(np.stack(self._mask_buf)).to(self.device)
         act_t = torch.tensor(self._act_buf, dtype=torch.long, device=self.device)
         old_logp_t = torch.tensor(self._logp_buf, dtype=torch.float32, device=self.device)
         adv_t = torch.from_numpy(advantages).to(self.device)
         ret_t = torch.from_numpy(returns).to(self.device)
+        use_imitation = (
+            self.imitation_agent is not None
+            and self.imitation_coef > 0
+            and len(self._teacher_policy_buf) == len(self._obs_buf)
+        )
+        teacher_policy_t = None
+        if use_imitation:
+            teacher_policy_t = torch.from_numpy(np.stack(self._teacher_policy_buf)).to(self.device)
 
         # normalize
         adv_t = (adv_t - adv_t.mean()) / (adv_t.std() + 1e-8)
@@ -285,6 +336,7 @@ class PPOTrainer:
 
         for _ in range(self.update_epochs):
             logits, values = self.model(obs_t)
+            logits = logits.masked_fill(mask_t == 0, -1e9)
             values = values.squeeze(-1)
 
             dist = Categorical(logits=logits)
@@ -293,7 +345,8 @@ class PPOTrainer:
 
             ratio = torch.exp(new_logp - old_logp_t)
             with torch.no_grad():
-                approx_kl = ((new_logp - old_logp_t) ** 2).mean()
+                log_ratio = new_logp - old_logp_t
+                approx_kl = ((ratio - 1.0) - log_ratio).mean()
                 clip_frac = ((ratio - 1).abs() > self.clip_ratio).float().mean()
 
             clipped = torch.clamp(ratio, 1.0 - self.clip_ratio, 1.0 + self.clip_ratio)
@@ -301,8 +354,18 @@ class PPOTrainer:
 
             value_loss = nn.functional.mse_loss(values, ret_t)
             entropy_loss = -entropy
+            if teacher_policy_t is not None:
+                log_probs = torch.log_softmax(logits, dim=-1)
+                imitation_loss = -(teacher_policy_t * log_probs).sum(dim=1).mean()
+            else:
+                imitation_loss = torch.zeros((), device=self.device)
 
-            loss = policy_loss + self.value_coef * value_loss + self.entropy_coef * entropy_loss
+            loss = (
+                policy_loss
+                + self.value_coef * value_loss
+                + self.entropy_coef * entropy_loss
+                + self.imitation_coef * imitation_loss
+            )
 
             # NaN guard
             if torch.isnan(loss) or torch.isinf(loss):
@@ -318,6 +381,7 @@ class PPOTrainer:
             stats["policy_loss"].append(policy_loss.item())
             stats["value_loss"].append(value_loss.item())
             stats["entropy"].append(entropy.item())
+            stats["imitation_loss"].append(imitation_loss.item())
             stats["total_loss"].append(loss.item())
             stats["approx_kl"].append(approx_kl.item())
             stats["clip_frac"].append(clip_frac.item())
@@ -327,6 +391,7 @@ class PPOTrainer:
             _, vals = self.model(obs_t)
             vals = vals.squeeze(-1).cpu().numpy()
         ev = 1.0 - np.var(ret_t.cpu().numpy() - vals) / (np.var(ret_t.cpu().numpy()) + 1e-8)
+        ev = float(np.clip(ev, -1.0, 1.0))
         stats["explained_var"].append(float(ev))
 
         self._clear_buf()
@@ -334,6 +399,8 @@ class PPOTrainer:
 
     def _clear_buf(self) -> None:
         self._obs_buf.clear()
+        self._mask_buf.clear()
+        self._teacher_policy_buf.clear()
         self._act_buf.clear()
         self._logp_buf.clear()
         self._val_buf.clear()

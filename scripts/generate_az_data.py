@@ -13,6 +13,7 @@ import numpy as np
 
 from agents.belief_mcts_agent import BeliefMCTSAgent
 from agents.greedy_agent import GreedyAgent
+from agents.musesfish_agent import MusesfishAgent
 from agents.random_agent import RandomAgent
 from jieqi.env import JieqiEnv
 from rl.az_data import AZSample, AZDataset
@@ -21,6 +22,7 @@ AGENTS = {
     "random": RandomAgent,
     "greedy": GreedyAgent,
     "belief_mcts": BeliefMCTSAgent,
+    "musesfish": MusesfishAgent,
 }
 
 

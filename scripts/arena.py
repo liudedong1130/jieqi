@@ -16,7 +16,7 @@ from evaluation.arena import AgentConfig, Arena
 def main() -> None:
     p = argparse.ArgumentParser(description="Arena agent tournament")
     p.add_argument("--agents", type=str, default="random,greedy",
-                   help="Comma-separated agent list (or 'all' for all five)")
+                   help="Comma-separated agent list (or 'all' for built-in baselines)")
     p.add_argument("--games", type=int, default=50, help="Games per match")
     p.add_argument("--max-steps", type=int, default=300)
     p.add_argument("--seed", type=int, default=0)
@@ -25,7 +25,7 @@ def main() -> None:
     args = p.parse_args()
 
     if args.agents == "all":
-        names = ["random", "greedy", "rollout", "belief_mcts"]
+        names = ["random", "greedy", "rollout", "belief_mcts", "ismcts", "musesfish", "musesfish_cpp"]
     else:
         names = [n.strip() for n in args.agents.split(",")]
 

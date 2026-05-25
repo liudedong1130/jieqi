@@ -22,7 +22,7 @@ def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--fen", type=str, default=None)
     p.add_argument("--vision", type=str, default=None)
-    p.add_argument("--agent", type=str, default="ismcts", choices=["ismcts", "belief_mcts", "greedy"])
+    p.add_argument("--agent", type=str, default="ismcts", choices=["ismcts", "belief_mcts", "greedy", "musesfish"])
     p.add_argument("--top-k", type=int, default=5)
     p.add_argument("--output-json", type=str, default=None)
     p.add_argument("--seed", type=int, default=0)

@@ -13,6 +13,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from agents.belief_mcts_agent import BeliefMCTSAgent
 from agents.greedy_agent import GreedyAgent
+from agents.musesfish_agent import MusesfishAgent
+from agents.musesfish_cpp_agent import MusesfishCppAgent
 from agents.policy_agent import PolicyAgent
 from agents.random_agent import RandomAgent
 from agents.rollout_agent import RolloutAgent
@@ -26,6 +28,8 @@ _SIMPLE_REGISTRY: dict[str, type] = {
     "rollout": RolloutAgent,
     "belief_mcts": BeliefMCTSAgent,
     "ismcts": ISMCTSAgent,
+    "musesfish": MusesfishAgent,
+    "musesfish_cpp": MusesfishCppAgent,
 }
 
 

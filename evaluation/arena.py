@@ -7,6 +7,8 @@ from typing import Any
 
 from agents.belief_mcts_agent import BeliefMCTSAgent
 from agents.greedy_agent import GreedyAgent
+from agents.musesfish_agent import MusesfishAgent
+from agents.musesfish_cpp_agent import MusesfishCppAgent
 from agents.policy_agent import PolicyAgent
 from agents.random_agent import RandomAgent
 from agents.rollout_agent import RolloutAgent
@@ -20,6 +22,8 @@ _SIMPLE_AGENTS: dict[str, type] = {
     "rollout": RolloutAgent,
     "belief_mcts": BeliefMCTSAgent,
     "ismcts": ISMCTSAgent,
+    "musesfish": MusesfishAgent,
+    "musesfish_cpp": MusesfishCppAgent,
 }
 
 # ---------------------------------------------------------------------------
@@ -82,7 +86,7 @@ def _mp_run_game(args: tuple) -> GameResult:
 @dataclass
 class AgentConfig:
     name: str
-    type: str  # random | greedy | rollout | belief_mcts | policy
+    type: str  # random | greedy | rollout | belief_mcts | ismcts | musesfish | musesfish_cpp | policy
     checkpoint: str | None = None
     deterministic: bool = False
     params: dict[str, Any] = field(default_factory=dict)

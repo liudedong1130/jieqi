@@ -15,6 +15,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from collections import deque
 
+from agents.musesfish_agent import MusesfishAgent
+from agents.musesfish_cpp_agent import MusesfishCppAgent
 from evaluation.arena import AgentConfig, Arena
 from jieqi.env import JieqiEnv
 from rl.opponent_pool import OpponentPool
@@ -82,6 +84,8 @@ def main() -> None:
     p.add_argument("--log-interval", type=int, default=10)
     p.add_argument("--eval-interval", type=int, default=100)
     p.add_argument("--eval-games", type=int, default=10)
+    p.add_argument("--eval-opponents", type=str, default="random,greedy,belief_mcts",
+                   help="Comma-separated eval opponents: random,greedy,belief_mcts,musesfish,musesfish_cpp")
     p.add_argument("--checkpoint-dir", type=str, default="ckpt")
     p.add_argument("--resume", type=str, default=None)
     p.add_argument("--seed", type=int, default=0)
@@ -90,6 +94,16 @@ def main() -> None:
     p.add_argument("--blocks", type=int, default=3, help="ResNet residual blocks")
     p.add_argument("--init-checkpoint", type=str, default=None, help="Init model from pretrained checkpoint")
     p.add_argument("--opponent-pool", action="store_true", help="Enable opponent pool training")
+    p.add_argument("--musesfish-opponent", action="store_true", help="Add Musesfish rule agent to opponent pool")
+    p.add_argument("--opponents", type=str, default=None,
+                   help="Comma-separated built-in opponents for pool: random,greedy,belief_mcts,musesfish,musesfish_cpp")
+    p.add_argument("--imitation-agent", type=str, default=None, choices=["musesfish", "musesfish_cpp"],
+                   help="Optional per-state imitation teacher for PPO auxiliary loss")
+    p.add_argument("--imitation-coef", type=float, default=0.0,
+                   help="Weight for imitation cross-entropy loss; 0 disables it")
+    p.add_argument("--musesfish-cpp-min-depth", type=int, default=3, help="C++ Musesfish min depth for PPO imitation")
+    p.add_argument("--musesfish-cpp-max-depth", type=int, default=4, help="C++ Musesfish max depth for PPO imitation")
+    p.add_argument("--musesfish-cpp-timeout", type=float, default=2.0, help="C++ Musesfish timeout per PPO imitation move")
     p.add_argument("--add-checkpoint-interval", type=int, default=100, help="Add self to pool every N episodes")
     p.add_argument("--self-play-prob", type=float, default=0.5, help="Probability of self-play vs opponent")
     p.add_argument("--device", type=str, default=None)
@@ -103,20 +117,35 @@ def main() -> None:
         algo="ppo", seed=args.seed,
         config={"algo": "ppo", "model": args.model, "episodes": args.episodes,
                  "lr": args.lr, "gamma": args.gamma, "seed": args.seed,
-                 "init_checkpoint": args.init_checkpoint or "none"},
+                 "init_checkpoint": args.init_checkpoint or "none",
+                 "imitation_agent": args.imitation_agent or "none",
+                 "imitation_coef": args.imitation_coef},
     )
 
     # CSV logger
     csv_headers = [
         "episode", "total_steps", "avg_return", "avg_len",
-        "policy_loss", "value_loss", "entropy",
+        "policy_loss", "value_loss", "entropy", "imitation_loss",
         "approx_kl", "clip_frac", "explained_var",
-        "eval_vs_random", "eval_vs_greedy", "eval_vs_belief_mcts",
+        "eval_vs_random", "eval_vs_greedy", "eval_vs_belief_mcts", "eval_vs_musesfish", "eval_vs_musesfish_cpp",
     ]
     csv_path = os.path.join(args.checkpoint_dir, "metrics.csv")
     logger = CSVLogger(csv_path, csv_headers)
 
     env = JieqiEnv(max_steps=args.max_steps)
+    imitation_agent = None
+    if args.imitation_agent and args.imitation_coef > 0:
+        if args.imitation_agent == "musesfish_cpp":
+            imitation_agent = MusesfishCppAgent(
+                seed=args.seed + 99991,
+                timeout=args.musesfish_cpp_timeout,
+                min_depth=args.musesfish_cpp_min_depth,
+                max_depth=args.musesfish_cpp_max_depth,
+                fallback=False,
+            )
+        else:
+            imitation_agent = MusesfishAgent(seed=args.seed + 99991)
+        print(f"Imitation teacher: {args.imitation_agent} (coef={args.imitation_coef:g})")
     trainer = PPOTrainer(
         env,
         lr=args.lr,
@@ -130,6 +159,8 @@ def main() -> None:
         device=args.device,
         model_type=args.model,
         model_kwargs={"channels": args.channels, "num_blocks": args.blocks} if args.model == "resnet" else {},
+        imitation_agent=imitation_agent,
+        imitation_coef=args.imitation_coef,
     )
 
     if args.resume:
@@ -147,12 +178,33 @@ def main() -> None:
     best_vs_random = -1.0
     best_vs_greedy = -1.0
     best_vs_belief_mcts = -1.0
+    best_vs_musesfish = -1.0
+    best_by_opponent = {
+        "random": best_vs_random,
+        "greedy": best_vs_greedy,
+        "belief_mcts": best_vs_belief_mcts,
+        "musesfish": best_vs_musesfish,
+        "musesfish_cpp": -1.0,
+    }
+    eval_opponents = [o.strip() for o in args.eval_opponents.split(",") if o.strip()]
 
     # Opponent pool setup
     pool: OpponentPool | None = None
+    eval_musesfish = args.musesfish_opponent
     if args.opponent_pool:
-        pool = OpponentPool()
-        print(f"Opponent pool: {len(pool)} agents (random, greedy)")
+        configured_opponents = None
+        if args.opponents:
+            configured_opponents = [o.strip() for o in args.opponents.split(",") if o.strip()]
+            eval_musesfish = "musesfish" in configured_opponents or "musesfish_cpp" in configured_opponents
+        pool = OpponentPool(
+            include_musesfish=args.musesfish_opponent,
+            opponents=configured_opponents,
+        )
+        if configured_opponents is not None:
+            names = ", ".join(configured_opponents)
+        else:
+            names = "random, greedy" + (", musesfish" if args.musesfish_opponent else "")
+        print(f"Opponent pool: {len(pool)} agents ({names})")
         if args.init_checkpoint:
             pool.add_policy(args.init_checkpoint, "init_pretrained")
 
@@ -186,31 +238,43 @@ def main() -> None:
         eval_vs_random = None
         eval_vs_greedy = None
         eval_vs_belief_mcts = None
+        eval_vs_musesfish = None
+        eval_vs_musesfish_cpp = None
         if args.eval_interval > 0 and ep % args.eval_interval == 0:
             tmp_ckpt = os.path.join(args.checkpoint_dir, "_eval_tmp.pt")
             trainer.save(tmp_ckpt)
-            er = quick_eval(tmp_ckpt, "random", n_games=args.eval_games, max_steps=min(200, args.max_steps))
-            eg = quick_eval(tmp_ckpt, "greedy", n_games=args.eval_games, max_steps=min(200, args.max_steps))
-            eb = quick_eval(tmp_ckpt, "belief_mcts", n_games=min(args.eval_games, 5), max_steps=min(150, args.max_steps))
-            eval_vs_random = er["win_rate"]
-            eval_vs_greedy = eg["win_rate"]
-            eval_vs_belief_mcts = eb["win_rate"]
-            if er["win_rate"] > best_vs_random:
-                best_vs_random = er["win_rate"]
-                trainer.save(os.path.join(args.checkpoint_dir, "best_vs_random.pt"))
-            if eg["win_rate"] > best_vs_greedy:
-                best_vs_greedy = eg["win_rate"]
-                trainer.save(os.path.join(args.checkpoint_dir, "best_vs_greedy.pt"))
-            if eb["win_rate"] > best_vs_belief_mcts:
-                best_vs_belief_mcts = eb["win_rate"]
-                trainer.save(os.path.join(args.checkpoint_dir, "best_vs_belief_mcts.pt"))
+            eval_results: dict[str, dict] = {}
+            opponents_to_eval = list(eval_opponents)
+            if eval_musesfish and "musesfish" not in opponents_to_eval and "musesfish_cpp" not in opponents_to_eval:
+                opponents_to_eval.append("musesfish")
+            for opponent_name in opponents_to_eval:
+                n_games = args.eval_games
+                max_steps = min(200, args.max_steps)
+                if opponent_name == "belief_mcts":
+                    n_games = min(args.eval_games, 5)
+                    max_steps = min(150, args.max_steps)
+                result = quick_eval(tmp_ckpt, opponent_name, n_games=n_games, max_steps=max_steps)
+                eval_results[opponent_name] = result
+                if result["win_rate"] > best_by_opponent.get(opponent_name, -1.0):
+                    best_by_opponent[opponent_name] = result["win_rate"]
+                    trainer.save(os.path.join(args.checkpoint_dir, f"best_vs_{opponent_name}.pt"))
+            eval_vs_random = eval_results.get("random", {}).get("win_rate")
+            eval_vs_greedy = eval_results.get("greedy", {}).get("win_rate")
+            eval_vs_belief_mcts = eval_results.get("belief_mcts", {}).get("win_rate")
+            eval_vs_musesfish = eval_results.get("musesfish", {}).get("win_rate")
+            eval_vs_musesfish_cpp = eval_results.get("musesfish_cpp", {}).get("win_rate")
             os.remove(tmp_ckpt)
-            print(f"  eval: vs random {er['win_rate']:.1%}  vs greedy {eg['win_rate']:.1%}  vs bmcts {eb['win_rate']:.1%}")
-            run.log_arena_result({
+            msg = "  eval:"
+            for opponent_name, result in eval_results.items():
+                label = "bmcts" if opponent_name == "belief_mcts" else opponent_name
+                msg += f" vs {label} {result['win_rate']:.1%}"
+            print(msg)
+            arena_result = {
                 "episode": trainer.episode_count,
-                "vs_random": er["win_rate"], "vs_greedy": eg["win_rate"],
-                "vs_belief_mcts": eb["win_rate"],
-            })
+            }
+            for opponent_name, result in eval_results.items():
+                arena_result[f"vs_{opponent_name}"] = result["win_rate"]
+            run.log_arena_result(arena_result)
 
         # Add current model to opponent pool
         if pool is not None and args.add_checkpoint_interval > 0 and ep % args.add_checkpoint_interval == 0:
@@ -232,12 +296,15 @@ def main() -> None:
                 round(loss_stats.get("policy_loss", 0.0), 4),
                 round(loss_stats.get("value_loss", 0.0), 4),
                 round(loss_stats.get("entropy", 0.0), 4),
+                round(loss_stats.get("imitation_loss", 0.0), 4),
                 round(loss_stats.get("approx_kl", 0.0), 6),
                 round(loss_stats.get("clip_frac", 0.0), 4),
                 round(loss_stats.get("explained_var", 0.0), 4),
                 round(eval_vs_random, 4) if eval_vs_random is not None else "",
                 round(eval_vs_greedy, 4) if eval_vs_greedy is not None else "",
                 round(eval_vs_belief_mcts, 4) if eval_vs_belief_mcts is not None else "",
+                round(eval_vs_musesfish, 4) if eval_vs_musesfish is not None else "",
+                round(eval_vs_musesfish_cpp, 4) if eval_vs_musesfish_cpp is not None else "",
             ]
             logger.log(row)
             # Also log to run manager
@@ -250,6 +317,7 @@ def main() -> None:
                 f"p_loss {loss_stats.get('policy_loss', 0):.3f} | "
                 f"v_loss {loss_stats.get('value_loss', 0):.3f} | "
                 f"ent {loss_stats.get('entropy', 0):.3f} | "
+                f"imit {loss_stats.get('imitation_loss', 0):.3f} | "
                 f"kl {loss_stats.get('approx_kl', 0):.5f} | "
                 f"ev {loss_stats.get('explained_var', 0):.2f} | "
                 f"{elapsed:.0f}s"

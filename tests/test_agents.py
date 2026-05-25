@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from dataclasses import replace
 
 import numpy as np
 import pytest
@@ -12,6 +13,8 @@ from jieqi.env import JieqiEnv
 from jieqi.move import rc_to_pos
 from agents.random_agent import RandomAgent
 from agents.greedy_agent import GreedyAgent
+from agents.musesfish_agent import MusesfishAgent
+from agents.musesfish_cpp_agent import MusesfishCppAgent
 from agents.rollout_agent import RolloutAgent
 from agents.belief_mcts_agent import BeliefState
 
@@ -115,6 +118,88 @@ class TestGreedyAgent:
         assert result["errors"] == 0
         total = result["agent_a"]["wins"] + result["agent_b"]["wins"] + result["draws"]
         assert total == 10
+
+
+# ---------------------------------------------------------------------------
+#  MusesfishAgent
+# ---------------------------------------------------------------------------
+
+class TestMusesfishAgent:
+    def test_select_action_is_legal(self) -> None:
+        env = JieqiEnv()
+        env.reset(seed=42)
+        agent = MusesfishAgent(seed=1, search_min_depth=1, search_max_depth=1)
+        for _ in range(30):
+            action = agent.select_action(env)
+            assert action in env.legal_actions()
+            env.step(action)
+            if sum(env.legal_action_mask()) == 0:
+                break
+
+    def test_no_true_type_peek(self) -> None:
+        env1 = JieqiEnv()
+        env2 = JieqiEnv()
+        env1.reset(seed=42)
+        env2.reset(seed=42)
+
+        # Change hidden true identities without changing public origin/revealed state.
+        for pos, piece in enumerate(env2.board.cells):
+            if piece is not None and not piece.revealed:
+                env2.board.set_cell(pos, replace(piece, true_type=PieceType.PAWN))
+
+        agent = MusesfishAgent(seed=7, search_min_depth=1, search_max_depth=1)
+        assert np.array_equal(env1.observation(), env2.observation())
+        assert env1.legal_actions() == env2.legal_actions()
+        assert agent.select_action(env1) == agent.select_action(env2)
+
+    def test_captures_high_value_revealed(self) -> None:
+        env = JieqiEnv(max_steps=100)
+        _setup_capture_position(env)
+
+        agent = MusesfishAgent(seed=42, use_original_search=False)
+        action = agent.select_action(env)
+        assert action % 90 == rc_to_pos(2, 0)
+
+    def test_cannon_pressure_scores_higher(self) -> None:
+        env = JieqiEnv(max_steps=100)
+        b = env.board
+        for pos in range(BOARD_SIZE):
+            b.set_cell(pos, None)
+        b._captured = []
+        b._turn = Color.RED
+        b.set_cell(rc_to_pos(9, 3), _piece(Color.RED, PieceType.KING, PieceType.KING, True))
+        b.set_cell(rc_to_pos(0, 4), _piece(Color.BLACK, PieceType.KING, PieceType.KING, True))
+        b.set_cell(rc_to_pos(5, 4), _piece(Color.RED, PieceType.CANNON, PieceType.CANNON, True))
+
+        agent = MusesfishAgent(seed=1)
+        pressure = rc_to_pos(5, 4) * 90 + rc_to_pos(1, 4)
+        quiet = rc_to_pos(5, 4) * 90 + rc_to_pos(5, 3)
+        assert pressure in env.legal_actions()
+        assert quiet in env.legal_actions()
+        assert agent.score_action(env, pressure) > agent.score_action(env, quiet)
+
+    def test_get_policy_is_legal_distribution(self) -> None:
+        env = JieqiEnv()
+        env.reset(seed=42)
+        agent = MusesfishAgent(seed=1, top_k=8)
+        policy, action = agent.get_policy(env)
+        legal = set(env.legal_actions())
+        assert policy.shape == (8100,)
+        assert action in legal
+        assert float(policy.sum()) == pytest.approx(1.0)
+        assert all(a in legal for a in np.flatnonzero(policy > 0).tolist())
+
+
+class TestMusesfishCppAgent:
+    def test_select_action_is_legal_when_binary_exists(self) -> None:
+        agent = MusesfishCppAgent(seed=1, timeout=3.0, min_depth=1, max_depth=1, fallback=False)
+        if not agent.binary_path.exists():
+            pytest.skip("musesfish_query binary is not built")
+
+        env = JieqiEnv()
+        env.reset(seed=42)
+        action = agent.select_action(env)
+        assert action in env.legal_actions()
 
 
 # ---------------------------------------------------------------------------

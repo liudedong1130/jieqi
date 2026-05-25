@@ -8,6 +8,7 @@ import numpy as np
 
 from agents.belief_mcts_agent import BeliefMCTSAgent, BeliefState, sample_determinization
 from agents.greedy_agent import HIDDEN_ESTIMATE, PIECE_VALUE
+from agents.musesfish_agent import MusesfishAgent
 from jieqi.env import JieqiEnv
 from jieqi.move import pos_to_rc
 from rl.ismcts import ISMCTSAgent
@@ -90,6 +91,44 @@ def _score_greedy_actions(env: JieqiEnv, actions: list[int]) -> list[dict]:
     return scored
 
 
+def _score_musesfish_actions(env: JieqiEnv, actions: list[int]) -> list[dict]:
+    agent = MusesfishAgent(seed=0)
+    return [{"action": a, "scores": [agent.score_action(env, a)]} for a in actions]
+
+
+def _score_musesfish_search_actions(
+    env: JieqiEnv,
+    actions: list[int],
+    *,
+    think_time: float,
+    search_min_depth: int,
+    search_max_depth: int,
+) -> list[dict]:
+    """Rank actions with the original Musesfish search best move first.
+
+    The original engine exposes one principal move rather than a full ranked
+    policy.  We use its searched best move as the top recommendation and keep
+    the lightweight evaluator to order the rest of the list.
+    """
+    scorer = MusesfishAgent(seed=0, use_original_search=False)
+    scored = [{"action": a, "scores": [scorer.score_action(env, a)]} for a in actions]
+    search_agent = MusesfishAgent(
+        seed=0,
+        think_time=think_time,
+        search_min_depth=search_min_depth,
+        search_max_depth=search_max_depth,
+    )
+    best = search_agent.select_action(env)
+    if best in actions:
+        baseline = max(item["scores"][0] for item in scored) if scored else 0.0
+        for item in scored:
+            if item["action"] == best:
+                item["scores"] = [baseline + 10000.0]
+                item["searched_best"] = True
+                break
+    return scored
+
+
 def generate_reasons(env: JieqiEnv, action: int, scores: list[float]) -> list[str]:
     reasons = []
     r = _check_capture(env, action)
@@ -111,6 +150,10 @@ def generate_recommendations(
     agent_type: str = "ismcts",
     top_k: int = 5,
     checkpoint: str | None = None,
+    musesfish_search: bool = False,
+    musesfish_think_time: float = 2.0,
+    musesfish_search_min_depth: int = 5,
+    musesfish_search_max_depth: int = 6,
 ) -> list[Recommendation]:
     """Generate top-k move recommendations with explanations.
 
@@ -150,6 +193,17 @@ def generate_recommendations(
             scored.append({"action": a, "scores": s})
     elif agent_type == "greedy":
         scored = _score_greedy_actions(env, actions)
+    elif agent_type == "musesfish":
+        if musesfish_search:
+            scored = _score_musesfish_search_actions(
+                env,
+                actions,
+                think_time=musesfish_think_time,
+                search_min_depth=musesfish_search_min_depth,
+                search_max_depth=musesfish_search_max_depth,
+            )
+        else:
+            scored = _score_musesfish_actions(env, actions)
     else:
         scored = [{"action": a, "scores": [0.0]} for a in actions]
 
@@ -166,7 +220,7 @@ def generate_recommendations(
             move=_format_move(a), action=a,
             score=composite, mean_score=mean_s,
             p10_score=p10, uncertainty=std_s,
-            reasons=generate_reasons(env, a, s),
+            reasons=(["原版搜索首选"] if item.get("searched_best") else []) + generate_reasons(env, a, s),
         ))
 
     results.sort(key=lambda x: x.score, reverse=True)

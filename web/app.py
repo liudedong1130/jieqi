@@ -35,6 +35,11 @@ _CN_B = {
 class AnalyzeRequest(BaseModel):
     agent: str = "ismcts"
     top_k: int = 5
+    # Frontend Musesfish defaults: stronger original-search move selection.
+    musesfish_search: bool = True
+    musesfish_think_time: float = 2.0
+    musesfish_search_min_depth: int = 5
+    musesfish_search_max_depth: int = 6
 
 
 class MoveRequest(BaseModel):
@@ -48,7 +53,15 @@ class MoveRequest(BaseModel):
 
 @app.post("/api/analyze")
 async def analyze(req: AnalyzeRequest) -> dict[str, Any]:
-    recs = generate_recommendations(_env, agent_type=req.agent, top_k=req.top_k)
+    recs = generate_recommendations(
+        _env,
+        agent_type=req.agent,
+        top_k=req.top_k,
+        musesfish_search=req.musesfish_search,
+        musesfish_think_time=req.musesfish_think_time,
+        musesfish_search_min_depth=req.musesfish_search_min_depth,
+        musesfish_search_max_depth=req.musesfish_search_max_depth,
+    )
     return {"recommendations": [r.to_dict() for r in recs]}
 
 

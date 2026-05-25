@@ -35,6 +35,21 @@ class TestWebAPI:
         assert recs[0]["score"] > 0
         assert "吃子" in recs[0]["reasons"]
 
+    def test_musesfish_analyze_available(self) -> None:
+        client.post("/api/reset")
+        resp = client.post("/api/analyze", json={
+            "agent": "musesfish",
+            "top_k": 3,
+            "musesfish_think_time": 0.05,
+            "musesfish_search_min_depth": 1,
+            "musesfish_search_max_depth": 1,
+        })
+        assert resp.status_code == 200
+        recs = resp.json()["recommendations"]
+        assert 0 < len(recs) <= 3
+        assert "action" in recs[0]
+        assert "原版搜索首选" in recs[0]["reasons"]
+
     def test_legal_moves(self) -> None:
         client.post("/api/reset")
         resp = client.get("/api/legal_moves")
@@ -72,6 +87,7 @@ class TestWebAPI:
         resp = client.get("/")
         assert resp.status_code == 200
         assert "揭棋" in resp.text
+        assert "<option>musesfish</option>" in resp.text
 
     def test_load_state_updates_board(self) -> None:
         resp = client.post("/api/load_state", json={

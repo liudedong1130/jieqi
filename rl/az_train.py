@@ -5,9 +5,9 @@ from dataclasses import dataclass
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader, Dataset
 
-from rl.az_data import AZDataset
+from rl.az_data import AZDataset, AZSample
 
 
 @dataclass
@@ -15,6 +15,33 @@ class TrainStats:
     policy_loss: float
     value_loss: float
     total_loss: float
+
+
+class _AZTorchDataset(Dataset):
+    def __init__(self, dataset: AZDataset) -> None:
+        self._samples = dataset.samples
+
+    def __len__(self) -> int:
+        return len(self._samples)
+
+    def __getitem__(self, idx: int) -> AZSample:
+        return self._samples[idx]
+
+
+def _collate_az_samples(samples: list[AZSample]) -> tuple[torch.Tensor, ...]:
+    obs = np.stack([s.observation for s in samples]).astype(np.float32, copy=False)
+    mask = np.stack([s.legal_mask for s in samples]).astype(np.int8, copy=False)
+    policy = np.zeros((len(samples), 8100), dtype=np.float32)
+    for i, sample in enumerate(samples):
+        if sample.policy_nnz > 0:
+            policy[i, sample.policy_indices] = sample.policy_probs
+    value = np.array([s.value_target for s in samples], dtype=np.float32)
+    return (
+        torch.from_numpy(obs),
+        torch.from_numpy(mask),
+        torch.from_numpy(policy),
+        torch.from_numpy(value),
+    )
 
 
 def masked_policy_loss(
@@ -45,14 +72,17 @@ def train_policy_value(
     value_coef: float = 0.5,
     log_prefix: str = "  ",
 ) -> TrainStats:
-    obs_t, mask_t, policy_t, value_t = dataset.to_tensors(device)
-    ds = TensorDataset(obs_t, mask_t, policy_t, value_t)
-    loader = DataLoader(ds, batch_size=batch_size, shuffle=True)
+    ds = _AZTorchDataset(dataset)
+    loader = DataLoader(ds, batch_size=batch_size, shuffle=True, collate_fn=_collate_az_samples)
 
     last_stats = TrainStats(0.0, 0.0, 0.0)
     for epoch in range(1, epochs + 1):
         total_p, total_v, total_loss, n = 0.0, 0.0, 0.0, 0
         for bo, bm, bp, bv in loader:
+            bo = bo.to(device)
+            bm = bm.to(device)
+            bp = bp.to(device)
+            bv = bv.to(device)
             logits, values = model(bo)
             p_loss = masked_policy_loss(logits, bp, bm)
             v_loss = nn.functional.mse_loss(values.squeeze(-1), bv)

@@ -8,5 +8,8 @@ runs/
 *.pt
 *.pth
 *.ckpt
+*.npz
 checkpoints/
 wandb/
+ckpt_*/
+agents/vendor/musesfish_cpp/build/

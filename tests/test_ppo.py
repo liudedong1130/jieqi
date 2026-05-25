@@ -128,6 +128,27 @@ class TestTraining:
         assert "explained_var" in stats
         assert stats["explained_var"] >= -1.0  # sanity range check
 
+    def test_imitation_loss_with_musesfish_teacher(self) -> None:
+        from agents.musesfish_agent import MusesfishAgent
+        from rl.trainer import PPOTrainer
+
+        PPOTrainer.set_seed(42)
+        env = JieqiEnv(max_steps=40)
+        trainer = PPOTrainer(
+            env,
+            episodes_per_update=2,
+            update_epochs=1,
+            imitation_agent=MusesfishAgent(seed=7),
+            imitation_coef=0.2,
+        )
+        for i in range(2):
+            trainer.collect_episode(seed=42 + i)
+        stats = trainer.update()
+        assert "imitation_loss" in stats
+        assert np.isfinite(stats["imitation_loss"])
+        assert stats["imitation_loss"] > 0
+        assert len(trainer._teacher_policy_buf) == 0
+
     def test_seed_reproducibility(self) -> None:
         from rl.trainer import PPOTrainer
 
@@ -555,6 +576,28 @@ class TestOpponentPool:
         agent = OpponentPool.make_agent(cfg, seed=1)
         action = agent.select_action(env)
         assert action in env.legal_actions()
+
+    def test_opponent_pool_can_use_only_musesfish(self) -> None:
+        from rl.opponent_pool import OpponentPool
+        import random as py_random
+
+        pool = OpponentPool(opponents=["musesfish"])
+        assert len(pool) == 1
+        cfg = pool.sample(py_random.Random(42))
+        assert cfg["type"] == "musesfish"
+        agent = OpponentPool.make_agent(cfg, seed=1)
+        assert agent is not None
+
+    def test_opponent_pool_can_use_musesfish_cpp(self) -> None:
+        from rl.opponent_pool import OpponentPool
+        import random as py_random
+
+        pool = OpponentPool(opponents=["musesfish_cpp"])
+        assert len(pool) == 1
+        cfg = pool.sample(py_random.Random(42))
+        assert cfg["type"] == "musesfish_cpp"
+        agent = OpponentPool.make_agent(cfg, seed=1)
+        assert agent is not None
 
     def test_train_with_init_checkpoint(self) -> None:
         import subprocess, sys

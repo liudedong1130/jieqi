@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from agents.belief_mcts_agent import BeliefMCTSAgent
 from agents.greedy_agent import GreedyAgent
+from agents.musesfish_agent import MusesfishAgent
 from rl.ismcts import ISMCTSAgent
 from vision.adapter import VisionBoardState, validate_vision_state, vision_state_to_game_state
 from jieqi.env import JieqiEnv
@@ -50,6 +51,8 @@ def main() -> None:
         agent = ISMCTSAgent(num_simulations=args.sims, max_depth=6, temperature=1.0, seed=0)
     elif args.agent == "belief_mcts":
         agent = BeliefMCTSAgent(num_samples=20, seed=0)
+    elif args.agent == "musesfish":
+        agent = MusesfishAgent(seed=0)
     else:
         agent = GreedyAgent(seed=0)
 
