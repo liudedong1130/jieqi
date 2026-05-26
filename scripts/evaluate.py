@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -90,6 +91,71 @@ def run_single_game(
     return {"steps": steps, "winner": "draw", "illegal": illegal_count, "error": None}
 
 
+def _run_eval_game_task(args: tuple) -> dict:
+    (
+        g,
+        agent_a_name,
+        agent_b_name,
+        max_steps,
+        seed,
+        checkpoint_a,
+        checkpoint_b,
+        deterministic,
+        swap,
+        half,
+    ) = args
+    if swap and g < half:
+        red_name, black_name = agent_a_name, agent_b_name
+        red_ckpt, black_ckpt = checkpoint_a, checkpoint_b
+        a_is_red = True
+    elif swap:
+        red_name, black_name = agent_b_name, agent_a_name
+        red_ckpt, black_ckpt = checkpoint_b, checkpoint_a
+        a_is_red = False
+    else:
+        red_name, black_name = agent_a_name, agent_b_name
+        red_ckpt, black_ckpt = checkpoint_a, checkpoint_b
+        a_is_red = True
+
+    env = JieqiEnv(max_steps=max_steps)
+    red = _make_agent(red_name, seed=seed + g * 2, checkpoint=red_ckpt, deterministic=deterministic)
+    black = _make_agent(black_name, seed=seed + g * 2 + 1, checkpoint=black_ckpt, deterministic=deterministic)
+    try:
+        game = run_single_game(env, red, black, seed=seed + g)
+    finally:
+        for agent in (red, black):
+            if hasattr(agent, "close"):
+                agent.close()
+    game["game_index"] = g
+    game["a_is_red"] = a_is_red
+    return game
+
+
+def _accumulate_game_stats(result: dict, game: dict) -> None:
+    result["avg_steps"] += game["steps"]
+    result["illegal_actions"] += game["illegal"]
+    if game["error"]:
+        result["errors"] += 1
+
+    a_is_red = game["a_is_red"]
+    if game["winner"] == "red":
+        if a_is_red:
+            result["agent_a"]["wins"] += 1
+            result["agent_a"]["as_red_wins"] += 1
+        else:
+            result["agent_b"]["wins"] += 1
+            result["agent_b"]["as_red_wins"] += 1
+    elif game["winner"] == "black":
+        if a_is_red:
+            result["agent_b"]["wins"] += 1
+            result["agent_b"]["as_black_wins"] += 1
+        else:
+            result["agent_a"]["wins"] += 1
+            result["agent_a"]["as_black_wins"] += 1
+    else:
+        result["draws"] += 1
+
+
 def run_eval(
     agent_a_name: str,
     agent_b_name: str,
@@ -100,87 +166,68 @@ def run_eval(
     checkpoint_b: str | None = None,
     deterministic: bool = False,
     swap: bool = True,
+    workers: int = 1,
+    progress_interval: int = 0,
 ) -> dict:
     """Run *n_games* between agent A and agent B, optionally swapping colours."""
 
-    a_wins = 0
-    b_wins = 0
-    draws = 0
-    a_red_wins = 0
-    a_black_wins = 0
-    b_red_wins = 0
-    b_black_wins = 0
-    total_steps = 0
-    total_illegal = 0
-    errors = 0
-
-    for g in range(n_games):
-        if swap and g < n_games // 2:
-            # First half: A = Red, B = Black
-            red_name, black_name = agent_a_name, agent_b_name
-            red_ckpt, black_ckpt = checkpoint_a, checkpoint_b
-        elif swap:
-            # Second half: B = Red, A = Black
-            red_name, black_name = agent_b_name, agent_a_name
-            red_ckpt, black_ckpt = checkpoint_b, checkpoint_a
-        else:
-            red_name, black_name = agent_a_name, agent_b_name
-            red_ckpt, black_ckpt = checkpoint_a, checkpoint_b
-
-        env = JieqiEnv(max_steps=max_steps)
-        red = _make_agent(red_name, seed=seed + g * 2, checkpoint=red_ckpt, deterministic=deterministic)
-        black = _make_agent(black_name, seed=seed + g * 2 + 1, checkpoint=black_ckpt, deterministic=deterministic)
-
-        game = run_single_game(env, red, black, seed=seed + g)
-        total_steps += game["steps"]
-        total_illegal += game["illegal"]
-        if game["error"]:
-            errors += 1
-
-        # Determine who is agent A/B in this game
-        a_is_red = (g < n_games // 2) if swap else True
-
-        if game["winner"] == "red":
-            if a_is_red:
-                a_wins += 1
-                a_red_wins += 1
-            else:
-                b_wins += 1
-                b_red_wins += 1
-        elif game["winner"] == "black":
-            if a_is_red:
-                b_wins += 1
-                b_black_wins += 1
-            else:
-                a_wins += 1
-                a_black_wins += 1
-        else:
-            draws += 1
-
     half = n_games // 2 if swap else n_games
-    return {
+    result = {
         "agent_a": {
             "name": agent_a_name,
-            "wins": a_wins,
-            "as_red_wins": a_red_wins,
-            "as_black_wins": a_black_wins,
+            "wins": 0,
+            "as_red_wins": 0,
+            "as_black_wins": 0,
             "as_red_total": half if swap else n_games,
             "as_black_total": n_games - half if swap else 0,
         },
         "agent_b": {
             "name": agent_b_name,
-            "wins": b_wins,
-            "as_red_wins": b_red_wins,
-            "as_black_wins": b_black_wins,
+            "wins": 0,
+            "as_red_wins": 0,
+            "as_black_wins": 0,
             "as_red_total": n_games - half if swap else 0,
             "as_black_total": half if swap else n_games,
         },
-        "draws": draws,
+        "draws": 0,
         "games": n_games,
-        "avg_steps": total_steps / max(n_games, 1),
-        "illegal_actions": total_illegal,
-        "errors": errors,
+        "avg_steps": 0.0,
+        "illegal_actions": 0,
+        "errors": 0,
     }
+    tasks = [
+        (
+            g,
+            agent_a_name,
+            agent_b_name,
+            max_steps,
+            seed,
+            checkpoint_a,
+            checkpoint_b,
+            deterministic,
+            swap,
+            half,
+        )
+        for g in range(n_games)
+    ]
+
+    if workers <= 1:
+        for idx, task in enumerate(tasks, 1):
+            _accumulate_game_stats(result, _run_eval_game_task(task))
+            if progress_interval > 0 and (idx % progress_interval == 0 or idx == n_games):
+                print(f"  progress: {idx}/{n_games} games", flush=True)
+    else:
+        with ProcessPoolExecutor(max_workers=workers) as pool:
+            futures = [pool.submit(_run_eval_game_task, task) for task in tasks]
+            completed = 0
+            for fut in as_completed(futures):
+                _accumulate_game_stats(result, fut.result())
+                completed += 1
+                if progress_interval > 0 and (completed % progress_interval == 0 or completed == n_games):
+                    print(f"  progress: {completed}/{n_games} games", flush=True)
+
+    result["avg_steps"] /= max(n_games, 1)
+    return result
 
 
 def _pct(n: int, total: int) -> str:
@@ -200,6 +247,8 @@ def main() -> None:
     p.add_argument("--seed", type=int, default=0, help="Base random seed")
     p.add_argument("--deterministic", action="store_true", help="Policy agent deterministic mode")
     p.add_argument("--no-swap", action="store_true", help="Disable colour swap")
+    p.add_argument("--workers", type=int, default=1, help="Parallel game workers")
+    p.add_argument("--progress-interval", type=int, default=0, help="Print progress every N completed games")
     p.add_argument("--output", default=None, help="Save JSON result to file")
     args = p.parse_args()
 
@@ -207,6 +256,8 @@ def main() -> None:
     print(f"Agent A ({args.agent_a})  vs  Agent B ({args.agent_b})  [{args.games} games]")
     if swap:
         print(f"  (colour swap enabled: {args.games // 2} games each as Red)")
+    if args.workers > 1:
+        print(f"  (parallel workers: {args.workers})")
     print()
 
     result = run_eval(
@@ -219,6 +270,8 @@ def main() -> None:
         checkpoint_b=args.checkpoint_b,
         deterministic=args.deterministic,
         swap=swap,
+        workers=args.workers,
+        progress_interval=args.progress_interval,
     )
 
     a = result["agent_a"]
