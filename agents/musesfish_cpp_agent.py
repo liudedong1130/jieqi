@@ -83,18 +83,24 @@ def _state_rows(env: JieqiEnv) -> list[str]:
     return ["".join(chars[row * 16:(row + 1) * 16]) for row in range(16)]
 
 
-def _ucci_to_action(ucci: str) -> int | None:
+def _ucci_to_action(ucci: str, player: int = int(Color.RED)) -> int | None:
     if len(ucci) < 4:
         return None
     try:
         fc = ord(ucci[0]) - ord("a")
-        fr = 9 - int(ucci[1])
+        fr_rank = int(ucci[1])
         tc = ord(ucci[2]) - ord("a")
-        tr = 9 - int(ucci[3])
+        tr_rank = int(ucci[3])
     except ValueError:
         return None
-    if not (0 <= fr < 10 and 0 <= fc < 9 and 0 <= tr < 10 and 0 <= tc < 9):
+    if not (0 <= fr_rank < 10 and 0 <= fc < 9 and 0 <= tr_rank < 10 and 0 <= tc < 9):
         return None
+    if player == int(Color.BLACK):
+        fr, fc = fr_rank, 8 - fc
+        tr, tc = tr_rank, 8 - tc
+    else:
+        fr, fc = 9 - fr_rank, fc
+        tr, tc = 9 - tr_rank, tc
     return encode_action(rc_to_pos(fr, fc), rc_to_pos(tr, tc))
 
 
@@ -144,16 +150,17 @@ class MusesfishCppAgent:
     def _select_action_cpp(self, env: JieqiEnv) -> int | None:
         if not self.binary_path.exists():
             return None
+        player = env.current_player()
         red = _remaining_pool(env, Color.RED)
         black = _remaining_pool(env, Color.BLACK)
         header = [
-            f"{1 if env.current_player() == int(Color.RED) else 0} 1 0",
+            f"{1 if player == int(Color.RED) else 0} 1 0",
             " ".join(f"{red[k]} {black[k]}" for k in "RNBACP"),
         ]
         payload = "\n".join(header + _state_rows(env)) + "\n"
         if self.persistent:
-            return self._select_action_persistent(payload)
-        return self._select_action_oneshot(payload)
+            return self._select_action_persistent(payload, player)
+        return self._select_action_oneshot(payload, player)
 
     def _command(self, *, loop: bool) -> list[str]:
         cmd = [str(self.binary_path), str(self.score_file), str(self.min_depth), str(self.max_depth)]
@@ -161,7 +168,7 @@ class MusesfishCppAgent:
             cmd.append("--loop")
         return cmd
 
-    def _select_action_oneshot(self, payload: str) -> int | None:
+    def _select_action_oneshot(self, payload: str, player: int) -> int | None:
         try:
             proc = subprocess.run(
                 self._command(loop=False),
@@ -176,9 +183,9 @@ class MusesfishCppAgent:
         lines = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
         if not lines:
             return None
-        return _ucci_to_action(lines[-1])
+        return _ucci_to_action(lines[-1], player)
 
-    def _select_action_persistent(self, payload: str) -> int | None:
+    def _select_action_persistent(self, payload: str, player: int) -> int | None:
         proc = self._ensure_worker()
         if proc is None or proc.stdin is None or proc.stdout is None:
             return None
@@ -192,7 +199,7 @@ class MusesfishCppAgent:
         if move is None:
             self.close()
             return None
-        return _ucci_to_action(move)
+        return _ucci_to_action(move, player)
 
     def _ensure_worker(self) -> subprocess.Popen[bytes] | None:
         if self._worker is not None and self._worker.poll() is None:

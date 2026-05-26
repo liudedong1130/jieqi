@@ -201,6 +201,24 @@ class TestMusesfishCppAgent:
         action = agent.select_action(env)
         assert action in env.legal_actions()
 
+    def test_black_move_uses_black_piece_when_binary_exists(self) -> None:
+        agent = MusesfishCppAgent(seed=1, timeout=3.0, min_depth=1, max_depth=1, persistent=False, fallback=False)
+        if not agent.binary_path.exists():
+            pytest.skip("musesfish_query binary is not built")
+
+        env = JieqiEnv()
+        env.reset(seed=42)
+        red_action = agent.select_action(env)
+        env.step(red_action)
+
+        assert env.current_player() == int(Color.BLACK)
+        black_action = agent.select_action(env)
+        from_pos = black_action // 90
+        piece = env.board.get_piece(from_pos)
+        assert black_action in env.legal_actions()
+        assert piece is not None
+        assert piece.color == Color.BLACK
+
 
 # ---------------------------------------------------------------------------
 #  RolloutAgent
