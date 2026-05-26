@@ -48,7 +48,7 @@ class TestWebAPI:
         recs = resp.json()["recommendations"]
         assert 0 < len(recs) <= 3
         assert "action" in recs[0]
-        assert "原版搜索首选" in recs[0]["reasons"]
+        assert "C++搜索首选" in recs[0]["reasons"]
 
     def test_legal_moves(self) -> None:
         client.post("/api/reset")

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -9,9 +10,15 @@ import numpy as np
 from agents.belief_mcts_agent import BeliefMCTSAgent, BeliefState, sample_determinization
 from agents.greedy_agent import HIDDEN_ESTIMATE, PIECE_VALUE
 from agents.musesfish_agent import MusesfishAgent
+from agents.musesfish_cpp_agent import MusesfishCppAgent
 from jieqi.env import JieqiEnv
 from jieqi.move import pos_to_rc
 from rl.ismcts import ISMCTSAgent
+
+
+_MUSESFISH_CPP_LOCK = threading.Lock()
+_MUSESFISH_CPP_AGENT: MusesfishCppAgent | None = None
+_MUSESFISH_CPP_CONFIG: tuple[float, int, int] | None = None
 
 
 @dataclass
@@ -39,7 +46,7 @@ def _format_move(action: int) -> str:
     f, t = action // 90, action % 90
     fr, fc = pos_to_rc(f)
     tr, tc = pos_to_rc(t)
-    return f"({fr},{fc})→({tr},{tc})"
+    return f"{fc + 1}路{fr + 1}线→{tc + 1}路{tr + 1}线"
 
 
 def _check_capture(env: JieqiEnv, action: int) -> str | None:
@@ -104,27 +111,38 @@ def _score_musesfish_search_actions(
     search_min_depth: int,
     search_max_depth: int,
 ) -> list[dict]:
-    """Rank actions with the original Musesfish search best move first.
+    """Rank actions with the C++ Musesfish search best move first.
 
-    The original engine exposes one principal move rather than a full ranked
+    The C++ engine exposes one principal move rather than a full ranked
     policy.  We use its searched best move as the top recommendation and keep
     the lightweight evaluator to order the rest of the list.
     """
     scorer = MusesfishAgent(seed=0, use_original_search=False)
     scored = [{"action": a, "scores": [scorer.score_action(env, a)]} for a in actions]
-    search_agent = MusesfishAgent(
-        seed=0,
-        think_time=think_time,
-        search_min_depth=search_min_depth,
-        search_max_depth=search_max_depth,
-    )
-    best = search_agent.select_action(env)
+
+    global _MUSESFISH_CPP_AGENT, _MUSESFISH_CPP_CONFIG
+    cfg = (think_time, search_min_depth, search_max_depth)
+    with _MUSESFISH_CPP_LOCK:
+        if _MUSESFISH_CPP_AGENT is None or _MUSESFISH_CPP_CONFIG != cfg:
+            if _MUSESFISH_CPP_AGENT is not None:
+                _MUSESFISH_CPP_AGENT.close()
+            _MUSESFISH_CPP_AGENT = MusesfishCppAgent(
+                seed=0,
+                timeout=think_time,
+                min_depth=search_min_depth,
+                max_depth=search_max_depth,
+                persistent=True,
+                fallback=True,
+            )
+            _MUSESFISH_CPP_CONFIG = cfg
+        best = _MUSESFISH_CPP_AGENT.select_action(env)
+
     if best in actions:
         baseline = max(item["scores"][0] for item in scored) if scored else 0.0
         for item in scored:
             if item["action"] == best:
                 item["scores"] = [baseline + 10000.0]
-                item["searched_best"] = True
+                item["cpp_searched_best"] = True
                 break
     return scored
 
@@ -151,7 +169,7 @@ def generate_recommendations(
     top_k: int = 5,
     checkpoint: str | None = None,
     musesfish_search: bool = False,
-    musesfish_think_time: float = 2.0,
+    musesfish_think_time: float = 3.0,
     musesfish_search_min_depth: int = 5,
     musesfish_search_max_depth: int = 6,
 ) -> list[Recommendation]:
@@ -220,7 +238,7 @@ def generate_recommendations(
             move=_format_move(a), action=a,
             score=composite, mean_score=mean_s,
             p10_score=p10, uncertainty=std_s,
-            reasons=(["原版搜索首选"] if item.get("searched_best") else []) + generate_reasons(env, a, s),
+            reasons=(["C++搜索首选"] if item.get("cpp_searched_best") else []) + generate_reasons(env, a, s),
         ))
 
     results.sort(key=lambda x: x.score, reverse=True)

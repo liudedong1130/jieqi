@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from starlette.responses import Response
 
 from analysis.recommendation import generate_recommendations
 from jieqi.env import JieqiEnv
@@ -35,15 +36,23 @@ _CN_B = {
 class AnalyzeRequest(BaseModel):
     agent: str = "ismcts"
     top_k: int = 5
-    # Frontend Musesfish defaults: stronger original-search move selection.
+    # Frontend Musesfish defaults: stronger C++ search move selection.
     musesfish_search: bool = True
-    musesfish_think_time: float = 2.0
+    musesfish_think_time: float = 3.0
     musesfish_search_min_depth: int = 5
     musesfish_search_max_depth: int = 6
 
 
 class MoveRequest(BaseModel):
     action: int
+
+
+class NoCacheStaticFiles(StaticFiles):
+    async def get_response(self, path: str, scope: dict) -> Response:
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        return response
 
 
 # ---------------------------------------------------------------------------
@@ -168,4 +177,4 @@ def _board_dict() -> dict[str, Any]:
 # Static files
 static_dir = Path(__file__).parent / "static"
 if static_dir.exists():
-    app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="static")
+    app.mount("/", NoCacheStaticFiles(directory=str(static_dir), html=True), name="static")

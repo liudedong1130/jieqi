@@ -15,7 +15,15 @@
   --board:#d9a857;
   --board-dark:#9a6332;
   --red:#b3261e;
+  --red-piece:#fff0df;
+  --red-piece-edge:#c94734;
+  --red-hidden:#9f342d;
+  --red-hidden-edge:#f0b08f;
   --black:#273043;
+  --black-piece:#e9eef3;
+  --black-piece-edge:#344055;
+  --black-hidden:#283244;
+  --black-hidden-edge:#9eb0c7;
   --green:#2f7d55;
   --blue:#285a84;
   --gold:#e1b143;
@@ -96,21 +104,34 @@ button.primary.stop{background:#9f2e27;border-color:#9f2e27}
 button.icon{min-width:38px;padding:0 9px}
 .board-wrap{display:flex;justify-content:center}
 .board{
-  display:grid;
-  grid-template-columns:repeat(9,54px);
-  grid-template-rows:repeat(10,54px);
-  gap:0;
-  padding:12px;
+  --step:54px;
+  --river:0px;
+  --pad-x:30px;
+  --pad-y:30px;
+  position:relative;
+  width:calc(var(--pad-x) * 2 + var(--step) * 8);
+  height:calc(var(--pad-y) * 2 + var(--step) * 9 + var(--river));
   background:var(--board);
   border:4px solid var(--board-dark);
   border-radius:8px;
-  box-shadow:inset 0 0 0 1px rgba(255,255,255,.35);
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.35),0 10px 24px rgba(67,38,12,.18);
+  overflow:hidden;
+}
+.board-lines{
+  position:absolute;
+  inset:0;
+  width:100%;
+  height:100%;
+  pointer-events:none;
+  z-index:0;
 }
 .cell{
-  width:54px;
-  height:54px;
-  background:#edc477;
-  border:1px solid rgba(96,57,24,.55);
+  width:42px;
+  height:42px;
+  transform:translate(-50%,-50%);
+  background:rgba(237,196,119,.52);
+  border:1px solid rgba(96,57,24,.22);
+  border-radius:50%;
   display:flex;
   align-items:center;
   justify-content:center;
@@ -118,24 +139,55 @@ button.icon{min-width:38px;padding:0 9px}
   font-size:22px;
   font-weight:800;
   line-height:1;
-  position:relative;
-  transition:transform .08s ease,box-shadow .08s ease,background .08s ease;
+  position:absolute;
+  z-index:1;
+  transition:box-shadow .08s ease,background .08s ease;
 }
 .cell:hover{box-shadow:inset 0 0 0 2px rgba(255,255,255,.5)}
 .cell.red_open,.cell.black_open,.cell.red_hidden,.cell.black_hidden{
   border-radius:50%;
-  margin:4px;
   width:46px;
   height:46px;
-  border:2px solid #f7e4b1;
-  background:#f9ecd0;
-  box-shadow:0 3px 0 rgba(77,42,16,.38),0 7px 12px rgba(77,42,16,.2);
+  border:2px solid rgba(255,248,228,.9);
+  box-shadow:0 3px 0 rgba(77,42,16,.38),0 7px 12px rgba(77,42,16,.2),inset 0 0 0 2px rgba(255,255,255,.35);
+  text-shadow:0 1px 0 rgba(255,255,255,.45);
 }
-.cell.red_open{color:var(--red)}
-.cell.black_open{color:var(--black)}
-.cell.red_hidden{color:#f3d3c9;background:#8e3028}
-.cell.black_hidden{color:#d8e4ef;background:#2b3648}
-.cell.empty{color:rgba(92,59,26,.35);font-weight:500}
+.cell.red_open{
+  color:var(--red);
+  background:radial-gradient(circle at 35% 28%,#fffaf0 0 26%,var(--red-piece) 58%,#f1c8a9 100%);
+  border-color:var(--red-piece-edge);
+}
+.cell.black_open{
+  color:var(--black);
+  background:radial-gradient(circle at 35% 28%,#ffffff 0 24%,var(--black-piece) 58%,#bfc9d4 100%);
+  border-color:var(--black-piece-edge);
+}
+.cell.red_hidden,.cell.black_hidden{
+  color:transparent;
+  text-shadow:none;
+}
+.cell.red_hidden{
+  background:
+    repeating-linear-gradient(135deg,rgba(255,255,255,.12) 0 3px,transparent 3px 8px),
+    radial-gradient(circle at 36% 28%,#c95447 0 18%,var(--red-hidden) 62%,#67231f 100%);
+  border-color:var(--red-hidden-edge);
+}
+.cell.black_hidden{
+  background:
+    repeating-linear-gradient(135deg,rgba(255,255,255,.1) 0 3px,transparent 3px 8px),
+    radial-gradient(circle at 36% 28%,#4f5e78 0 18%,var(--black-hidden) 62%,#141923 100%);
+  border-color:var(--black-hidden-edge);
+}
+.cell.red_hidden::before,.cell.black_hidden::before{
+  content:"";
+  position:absolute;
+  inset:9px;
+  border-radius:50%;
+  border:2px solid rgba(255,255,255,.42);
+  box-shadow:inset 0 0 0 1px rgba(0,0,0,.16);
+}
+.cell.empty{color:transparent;font-weight:500;background:transparent;border-color:transparent}
+.cell.empty:hover{background:rgba(255,255,255,.16);border-color:rgba(96,57,24,.25)}
 .cell.selected{box-shadow:0 0 0 3px var(--gold),0 0 20px rgba(225,177,67,.65)}
 .cell.dest::after{
   content:"";
@@ -180,9 +232,6 @@ button.icon{min-width:38px;padding:0 9px}
   .status-pill{text-align:left;margin-top:12px}
   .toolbar,.tool-group{align-items:stretch}
   .tool-group{width:100%;flex-wrap:wrap}
-  .board{grid-template-columns:repeat(9,10vw);grid-template-rows:repeat(10,10vw);padding:8px}
-  .cell{width:10vw;height:10vw;font-size:18px}
-  .cell.red_open,.cell.black_open,.cell.red_hidden,.cell.black_hidden{width:calc(10vw - 8px);height:calc(10vw - 8px);margin:4px}
   .side-panel{grid-template-columns:1fr}
 }
 </style>
@@ -275,16 +324,92 @@ let playMode = false, selectedPos = null, legalCache = [];
 
 const CN = {0:'帅',1:'仕',2:'相',3:'馬',4:'車',5:'炮',6:'兵'};
 const CNB = {0:'将',1:'士',2:'象',3:'马',4:'车',5:'炮',6:'卒'};
+const BOARD_GEOMETRY = {step:54, river:0, padX:30, padY:30};
+
+function boardPoint(row, col) {
+  return {
+    x: BOARD_GEOMETRY.padX + col * BOARD_GEOMETRY.step,
+    y: BOARD_GEOMETRY.padY + row * BOARD_GEOMETRY.step + (row >= 5 ? BOARD_GEOMETRY.river : 0),
+  };
+}
+
+function addSvgLine(svg, x1, y1, x2, y2, width = 1.5) {
+  const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+  line.setAttribute('x1', x1);
+  line.setAttribute('y1', y1);
+  line.setAttribute('x2', x2);
+  line.setAttribute('y2', y2);
+  line.setAttribute('stroke', 'rgba(83,48,20,.72)');
+  line.setAttribute('stroke-width', width);
+  line.setAttribute('stroke-linecap', 'square');
+  svg.appendChild(line);
+}
+
+function addRiverText(svg, text, x, y) {
+  const node = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+  node.textContent = text;
+  node.setAttribute('x', x);
+  node.setAttribute('y', y);
+  node.setAttribute('text-anchor', 'middle');
+  node.setAttribute('dominant-baseline', 'middle');
+  node.setAttribute('font-size', '22');
+  node.setAttribute('font-weight', '800');
+  node.setAttribute('letter-spacing', '8');
+  node.setAttribute('fill', 'rgba(83,48,20,.74)');
+  svg.appendChild(node);
+}
+
+function drawBoardLines(board) {
+  const width = BOARD_GEOMETRY.padX * 2 + BOARD_GEOMETRY.step * 8;
+  const height = BOARD_GEOMETRY.padY * 2 + BOARD_GEOMETRY.step * 9 + BOARD_GEOMETRY.river;
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.classList.add('board-lines');
+  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+
+  const left = boardPoint(0, 0).x;
+  const right = boardPoint(0, 8).x;
+  const top = boardPoint(0, 0).y;
+  const upperRiver = boardPoint(4, 0).y;
+  const lowerRiver = boardPoint(5, 0).y;
+  const bottom = boardPoint(9, 0).y;
+
+  for (let c = 0; c < 9; c++) {
+    const x = boardPoint(0, c).x;
+    addSvgLine(svg, x, top, x, upperRiver);
+    addSvgLine(svg, x, lowerRiver, x, bottom);
+  }
+  for (let r = 0; r < 10; r++) {
+    const y = boardPoint(r, 0).y;
+    addSvgLine(svg, left, y, right, y);
+  }
+  addSvgLine(svg, left, top, right, top, 2.4);
+  addSvgLine(svg, left, bottom, right, bottom, 2.4);
+  addSvgLine(svg, left, top, left, bottom, 2.4);
+  addSvgLine(svg, right, top, right, bottom, 2.4);
+  addSvgLine(svg, boardPoint(0, 3).x, boardPoint(0, 3).y, boardPoint(2, 5).x, boardPoint(2, 5).y);
+  addSvgLine(svg, boardPoint(0, 5).x, boardPoint(0, 5).y, boardPoint(2, 3).x, boardPoint(2, 3).y);
+  addSvgLine(svg, boardPoint(7, 3).x, boardPoint(7, 3).y, boardPoint(9, 5).x, boardPoint(9, 5).y);
+  addSvgLine(svg, boardPoint(7, 5).x, boardPoint(7, 5).y, boardPoint(9, 3).x, boardPoint(9, 3).y);
+
+  const riverY = (upperRiver + lowerRiver) / 2;
+  addRiverText(svg, '楚河', boardPoint(4, 2).x, riverY);
+  addRiverText(svg, '汉界', boardPoint(4, 6).x, riverY);
+  board.appendChild(svg);
+}
 
 function initBoard() {
   const b = document.getElementById('board');
   b.innerHTML = '';
+  drawBoardLines(b);
   for (let r = 0; r < 10; r++) {
     for (let c = 0; c < 9; c++) {
       const cell = document.createElement('div');
       cell.className = 'cell empty';
-      cell.textContent = '·';
+      cell.textContent = '';
       cell.dataset.row = r; cell.dataset.col = c;
+      const point = boardPoint(r, c);
+      cell.style.left = `${point.x}px`;
+      cell.style.top = `${point.y}px`;
       cell.onclick = () => cellClick(r, c, cell);
       b.appendChild(cell);
     }
@@ -320,6 +445,17 @@ function setHint(text) {
   document.getElementById('hint').textContent = text;
 }
 
+function formatCoord(row, col) {
+  return `${col + 1}路${row + 1}线`;
+}
+
+function describeCell(cell) {
+  if (cell.classList.contains('red_hidden')) return '红方暗子';
+  if (cell.classList.contains('black_hidden')) return '黑方暗子';
+  if (cell.classList.contains('empty')) return '空';
+  return cell.textContent || '棋子';
+}
+
 async function refreshLegalMoves() {
   try {
     const resp = await fetch('/api/legal_moves');
@@ -345,44 +481,24 @@ async function cellClick(r, c, cell) {
     if (selectedPos === null) {
       const hasPiece = legal.some(m => m.from[0]===r && m.from[1]===c);
       if (!hasPiece) {
-        setHint(`(${r}, ${c}) 没有当前可走的合法走法。`);
+        setHint(`${formatCoord(r, c)} 没有当前可走的合法走法。`);
         return;
       }
       selectedPos = pos;
-      document.getElementById('selectedInfo').textContent = `${r},${c}`;
+      document.getElementById('selectedInfo').textContent = formatCoord(r, c);
       cell.classList.add('selected');
       const moves = legal.filter(m => m.from[0]===r && m.from[1]===c);
       moves.forEach(m => {
         const d = document.querySelector(`.cell[data-row="${m.to[0]}"][data-col="${m.to[1]}"]`);
         if (d) d.classList.add('dest');
       });
-      setHint(`已选 (${r}, ${c})，共有 ${moves.length} 个合法落点。`);
+      setHint(`已选 ${formatCoord(r, c)}，共有 ${moves.length} 个合法落点。`);
     } else {
       const move = legal.find(m => m.from[0]*9+m.from[1]===selectedPos && m.to[0]*9+m.to[1]===pos);
       if (move) {
-        // Human move
-        let r2 = await fetch('/api/apply_move', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({action:move.action})});
-        let d2 = await r2.json();
-        renderBoard(d2.cells, d2.captured);
-        setStatus('AI 思考中...');
-        setHint(`已执行走法 action=${move.action}。`);
-
-        // AI responds
-        setTimeout(async () => {
-          let r3 = await fetch('/api/analyze', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({agent: document.getElementById('agent').value, top_k:1})});
-          let d3 = await r3.json();
-          if (d3.recommendations?.length > 0) {
-            await fetch('/api/apply_move', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({action: d3.recommendations[0].action})});
-            let r4 = await fetch('/api/board_state');
-            let d4 = await r4.json();
-            renderBoard(d4.cells, d4.captured);
-            setStatus('你的回合');
-            refreshLegalMoves();
-          }
-          refreshRecs();
-        }, 200);
+        await playHumanThenAi(move.action);
       } else {
-        setHint(`(${r}, ${c}) 不是当前选中棋子的合法落点。`);
+        setHint(`${formatCoord(r, c)} 不是当前选中棋子的合法落点。`);
       }
       selectedPos = null;
       clearHighlights();
@@ -393,18 +509,66 @@ async function cellClick(r, c, cell) {
   // Edit mode
   const mode = document.getElementById('editMode').value;
   if (!mode) {
-    setHint(`查看位置 (${r}, ${c})：${cell.textContent || '空'}。`);
+    setHint(`查看位置 ${formatCoord(r, c)}：${describeCell(cell)}。`);
     return;
   }
   const pt = parseInt(document.getElementById('pieceType').value);
   cell.className = 'cell ' + mode;
   cell.dataset.ptype = pt;
-  if (mode.includes('red')) cell.textContent = mode.includes('hidden') ? '暗' : CN[pt];
-  else if (mode.includes('black')) cell.textContent = mode.includes('hidden') ? '暗' : CNB[pt];
-  if (mode === 'empty') { cell.className = 'cell empty'; cell.textContent = '·'; }
+  if (mode.includes('red')) cell.textContent = mode.includes('hidden') ? '' : CN[pt];
+  else if (mode.includes('black')) cell.textContent = mode.includes('hidden') ? '' : CNB[pt];
+  if (mode === 'empty') { cell.className = 'cell empty'; cell.textContent = ''; }
   updateBoardState();
   updateCounts();
-  setHint(`已编辑 (${r}, ${c})，后台局面已同步。`);
+  setHint(`已编辑 ${formatCoord(r, c)}，后台局面已同步。`);
+}
+
+async function postJson(url, body) {
+  const resp = await fetch(url, {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(body || {})
+  });
+  const data = await resp.json();
+  if (!resp.ok) {
+    throw new Error(data.detail || `请求失败：${resp.status}`);
+  }
+  return data;
+}
+
+async function playHumanThenAi(action) {
+  try {
+    const humanBoard = await postJson('/api/apply_move', {action});
+    renderBoard(humanBoard.cells, humanBoard.captured);
+    clearHighlights();
+    await refreshLegalMoves();
+    await refreshRecs();
+    setStatus('AI 思考中...');
+    setHint(`已执行走法 action=${action}。`);
+
+    const analyzed = await postJson('/api/analyze', {
+      agent: document.getElementById('agent').value,
+      top_k: 1
+    });
+    const aiMove = analyzed.recommendations?.[0];
+    if (!aiMove) {
+      setStatus('对局结束');
+      setHint('AI 没有可走的合法走法。');
+      return;
+    }
+
+    const aiBoard = await postJson('/api/apply_move', {action: aiMove.action});
+    renderBoard(aiBoard.cells, aiBoard.captured);
+    await refreshLegalMoves();
+    await refreshRecs();
+    setStatus('你的回合');
+    setHint(`AI 已走 ${aiMove.move}。`);
+  } catch (e) {
+    setStatus('出错');
+    setHint(e.message || 'AI 对弈流程出错。');
+    await refreshLegalMoves();
+    await refreshRecs();
+  }
 }
 
 function updateBoardState() {
@@ -429,9 +593,9 @@ function renderBoard(cells, captured) {
     if (info) {
       c.className = 'cell ' + info.state;
       c.dataset.ptype = info.piece_type;
-      c.textContent = info.label || '·';
+      c.textContent = info.state.includes('hidden') ? '' : (info.label || '·');
     } else {
-      c.className = 'cell empty'; c.textContent = '·'; c.dataset.ptype = '';
+      c.className = 'cell empty'; c.textContent = ''; c.dataset.ptype = '';
     }
   });
   if (captured) {
