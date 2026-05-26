@@ -39,11 +39,14 @@ def _make_agent(
     seed: int,
     checkpoint: str | None = None,
     deterministic: bool = False,
+    musesfish_cpp_params: dict[str, Any] | None = None,
 ) -> Any:
     if name == "policy":
         if checkpoint is None:
             raise ValueError("--checkpoint required for policy agent")
         return PolicyAgent(checkpoint, deterministic=deterministic, seed=seed)
+    if name == "musesfish_cpp":
+        return MusesfishCppAgent(seed=seed, **(musesfish_cpp_params or {}))
     cls = _SIMPLE_REGISTRY.get(name)
     if cls is None:
         raise ValueError(f"Unknown agent '{name}'. Options: {list(_SIMPLE_REGISTRY)} + policy")
@@ -103,6 +106,7 @@ def _run_eval_game_task(args: tuple) -> dict:
         deterministic,
         swap,
         half,
+        musesfish_cpp_params,
     ) = args
     if swap and g < half:
         red_name, black_name = agent_a_name, agent_b_name
@@ -118,8 +122,20 @@ def _run_eval_game_task(args: tuple) -> dict:
         a_is_red = True
 
     env = JieqiEnv(max_steps=max_steps)
-    red = _make_agent(red_name, seed=seed + g * 2, checkpoint=red_ckpt, deterministic=deterministic)
-    black = _make_agent(black_name, seed=seed + g * 2 + 1, checkpoint=black_ckpt, deterministic=deterministic)
+    red = _make_agent(
+        red_name,
+        seed=seed + g * 2,
+        checkpoint=red_ckpt,
+        deterministic=deterministic,
+        musesfish_cpp_params=musesfish_cpp_params,
+    )
+    black = _make_agent(
+        black_name,
+        seed=seed + g * 2 + 1,
+        checkpoint=black_ckpt,
+        deterministic=deterministic,
+        musesfish_cpp_params=musesfish_cpp_params,
+    )
     try:
         game = run_single_game(env, red, black, seed=seed + g)
     finally:
@@ -168,6 +184,9 @@ def run_eval(
     swap: bool = True,
     workers: int = 1,
     progress_interval: int = 0,
+    musesfish_cpp_min_depth: int = 5,
+    musesfish_cpp_max_depth: int = 6,
+    musesfish_cpp_timeout: float = 3.0,
 ) -> dict:
     """Run *n_games* between agent A and agent B, optionally swapping colours."""
 
@@ -195,6 +214,13 @@ def run_eval(
         "illegal_actions": 0,
         "errors": 0,
     }
+    musesfish_cpp_params = {
+        "min_depth": musesfish_cpp_min_depth,
+        "max_depth": musesfish_cpp_max_depth,
+        "timeout": musesfish_cpp_timeout,
+        "persistent": True,
+        "fallback": False,
+    }
     tasks = [
         (
             g,
@@ -207,6 +233,7 @@ def run_eval(
             deterministic,
             swap,
             half,
+            musesfish_cpp_params,
         )
         for g in range(n_games)
     ]
@@ -249,6 +276,9 @@ def main() -> None:
     p.add_argument("--no-swap", action="store_true", help="Disable colour swap")
     p.add_argument("--workers", type=int, default=1, help="Parallel game workers")
     p.add_argument("--progress-interval", type=int, default=0, help="Print progress every N completed games")
+    p.add_argument("--musesfish-cpp-min-depth", type=int, default=5, help="C++ Musesfish minimum search depth")
+    p.add_argument("--musesfish-cpp-max-depth", type=int, default=6, help="C++ Musesfish maximum search depth")
+    p.add_argument("--musesfish-cpp-timeout", type=float, default=3.0, help="C++ Musesfish timeout per move")
     p.add_argument("--output", default=None, help="Save JSON result to file")
     args = p.parse_args()
 
@@ -258,6 +288,11 @@ def main() -> None:
         print(f"  (colour swap enabled: {args.games // 2} games each as Red)")
     if args.workers > 1:
         print(f"  (parallel workers: {args.workers})")
+    if args.agent_a == "musesfish_cpp" or args.agent_b == "musesfish_cpp":
+        print(
+            f"  (musesfish_cpp depth: {args.musesfish_cpp_min_depth}-"
+            f"{args.musesfish_cpp_max_depth}, timeout={args.musesfish_cpp_timeout:g}s)"
+        )
     print()
 
     result = run_eval(
@@ -272,6 +307,9 @@ def main() -> None:
         swap=swap,
         workers=args.workers,
         progress_interval=args.progress_interval,
+        musesfish_cpp_min_depth=args.musesfish_cpp_min_depth,
+        musesfish_cpp_max_depth=args.musesfish_cpp_max_depth,
+        musesfish_cpp_timeout=args.musesfish_cpp_timeout,
     )
 
     a = result["agent_a"]
